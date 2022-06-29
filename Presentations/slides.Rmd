@@ -1,0 +1,165 @@
+---
+title: plots for presentation
+author: RF
+editor_options: 
+  chunk_output_type: console
+---
+
+
+```{r}
+library(tidyverse)
+library(mizer)
+library(mizerExperimental)
+library(mizerHowTo)
+library(parallel)
+library(tictoc)
+library(viridis)
+load("../size_spec_inputs.RData")
+sim <- readRDS("../params/params7.RDS")
+```
+
+```{r}
+# quick fix of legends
+plotDiet2 <- function (sim, species = NULL, xlim = c(1, NA), returnData = F) 
+{
+    params <- sim@params
+    diet <- getDiet(params)
+    plot_dat <- melt(diet)
+    plot_dat <- plot_dat[plot_dat$value > 0, ]
+    colnames(plot_dat) <- c("Predator", "size", "Prey", 
+        "Proportion")
+legend_levels <- intersect(names(params@linecolour), plot_dat$Prey)
+    if (is.null(species)) 
+        p <- ggplot(plot_dat) + facet_wrap(. ~ Predator, scales = "free")
+    else p <- ggplot(filter(plot_dat, Predator == species))
+    p <- p + geom_area(aes(x = size, y = Proportion, fill = Prey)) + 
+        scale_x_continuous(limits = c(1, NA), name = "Size [g]", 
+            trans = "log10") + scale_fill_manual(values = sim@params@linecolour[legend_levels]) + 
+        theme(legend.position = "right", legend.key = element_rect(fill = "white"), 
+            panel.background = element_blank(), panel.grid.minor = element_line(color = "gray"), 
+            strip.background = element_blank())
+    if (returnData) 
+        return(plot_dat)
+    else return(p)
+}
+
+```
+
+
+
+Size spectrum
+
+```{r}
+
+
+p1 <- plotSpectra(sim, total = T)
+ggsave(p1, filename = "spectra.png", units = "cm", height = 10, width = 20)
+
+```
+
+
+Growth
+
+
+```{r}
+
+p2 <- plotGrowthCurves(sim, species_panel = T)
+ggsave(p2, filename = "growth.png", units = "cm", height = 10, width = 20)
+
+```
+
+Diet
+
+```{r}
+
+p3 <- plotDiet2(sim, species = "D.ele")
+ggsave(p3, filename = "diet.png", units = "cm", height = 15, width = 20)
+
+
+```
+
+
+Biomass comparison
+
+
+```{r}
+
+p4 <- plotBiomassObservedVsModel(sim)
+ggsave(p4, filename = "comparison.png", units = "cm", height = 14, width = 20)
+
+
+```
+
+```{r}
+
+
+p <- plotYieldVsF(sim@params, species = "D.ele", no_steps = 50)
+
+
+```
+
+
+Fisheries data
+
+
+```{r}
+
+ll_area_yr <- read_csv("ll_area_yr.csv")
+
+ll_trends <- cbind(ll_trends,ll_area_yr[-dim(ll_area_yr)[1],3])
+
+ll_km2 <- data.frame("year" = ll_trends$Year, "effort" = ll_trends$Effort/ll_trends$area_km,
+                     "catchT" = ll_trends$CatchT / ll_trends$area_km)
+
+ll_avg <- mean(ll_km2$catchT) * 1e6 # in grams
+
+plot_dat <- ll_km2
+colnames(plot_dat) <- c("Year", "Effort", "Catch(t)")
+plot_dat <- reshape2::melt(plot_dat,"Year")
+
+p5 <- ggplot(plot_dat) +
+  geom_line(aes(x = Year, y = value)) +
+  facet_grid(variable~., scales = "free")
+
+ggsave(p5, filename = "llData.png", units = "cm", height = 14, width = 20)
+
+
+```
+
+Energy budget
+
+```{r}
+
+
+plot_dat <- plotEnergyBudget(sim17, species = "D.ele", return_data = T)
+params <- sim17@params
+ params <- setColours(params, list(Growth = "#F8766D", 
+        Income = "#7CAE00", `Metabolic loss` = "#00BFCFC4", 
+        Reproduction = "#C77CFF"))
+xtrans <- "log10"
+ 
+pl <- plotDataFrame(plot_dat[[1]], params, style = "area", 
+        xlab = "Size [g]", ylab = "Rate [g/year]", 
+        xtrans = xtrans, wrap_var = "Species", wrap_scale = "free")
+
+    pl <- pl + geom_vline(data = plot_dat[[2]], aes(xintercept = w_mat, 
+        group = Species), linetype = "dotted") + 
+      geom_vline(data = plot_dat[[2]], 
+        aes(xintercept = w_inf, group = Species), linetype = "dotted") + 
+        geom_text(data = plot_dat[[2]], aes(x = w_mat, y = y_coord * 
+            0.2, label = "\nMaturity"), angle = 90) + 
+      geom_text(data = plot_dat[[2]], 
+        aes(x = w_inf, y = y_coord * 0.2, label = "\nMaximum"), 
+        angle = 90)+
+      geom_vline(xintercept = 2722, color = "red") +
+            geom_text(data = plot_dat[[2]], 
+        aes(x = 2722, y = y_coord * 0.2, label = "\nLonglines"), 
+        angle = 90, color = "red") +
+      scale_x_continuous(limits = c(10,NA), trans = "log10", name = "Size[g]")
+
+
+ggsave(pl, filename = "energyBudget.png", units = "cm", height = 14, width = 20)
+
+```
+
+

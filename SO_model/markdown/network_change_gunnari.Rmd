@@ -1,0 +1,269 @@
+---
+title: "network_change_gunnari"
+output: html_document
+---
+
+First run all matrix in network_exps.rmd
+
+Make matrix and get change
+```{r}
+#G_Base
+G_Base <- matrix_Base_ordered
+G_Base[,c(1:15)] <- 0
+G_Base[,c(17:18)] <- 0
+
+play_G_Base <- G_Base[,-c(1:15)]
+play_G_Base <- play_G_Base[,-c(2,3)]
+play_G_Base <- as.data.frame(play_G_Base)
+
+#G_KI
+G_KI <- matrix_KI_ordered
+G_KI[,c(1:15)] <- 0
+G_KI[,c(17:18)] <- 0
+
+# play_G_KI <- G_KI[,-c(1:15)]
+# play_G_KI <- play_G_KI[,-c(2,3)]
+# play_G_KI <- as.data.frame(play_G_KI)
+# 
+# play_Base_KI_G <- cbind(play_G_Base, play_G_KI)
+# fwrite(play_Base_KI_G, "Base_KI_G.csv", row.names = T)
+Base_KI_Diff_G <- read.csv("Base_KI_G_edited.csv")
+
+#G_KD
+G_KD <- matrix_KD_ordered
+G_KD[,c(1:15)] <- 0
+G_KD[,c(17:18)] <- 0
+
+# play_G_KD <- G_KD[,-c(1:15)]
+# play_G_KD <- play_G_KD[,-c(2,3)]
+# play_G_KD <- as.data.frame(play_G_KD)
+# 
+# play_Base_KD_G <- cbind(play_G_Base, play_G_KD)
+# fwrite(play_Base_KD_G, "Base_KD_G.csv", row.names = T)
+Base_KD_Diff_G <- read.csv("Base_KD_G_edited.csv")
+
+#G_LI
+G_LI <- matrix_LI_ordered
+G_LI[,c(1:15)] <- 0
+G_LI[,c(17:18)] <- 0
+
+# play_G_LI <- G_LI[,-c(1:15)]
+# play_G_LI <- play_G_LI[,-c(2:3)]
+# play_G_LI <- as.data.frame(play_G_LI)
+# 
+# play_Base_LI_G <- cbind(play_G_Base, play_G_LI)
+# fwrite(play_Base_LI_G, "Base_LI_G.csv", row.names = T)
+Base_LI_Diff_G <- read.csv("Base_LI_G_edited.csv")
+
+#G_LD
+G_LD <- matrix_LD_ordered
+G_LD[,c(1:15)] <- 0
+G_LD[,c(17:18)] <- 0
+
+# play_G_LD <- G_LD[,-c(1:15)]
+# play_G_LD <- play_G_LD[,-c(2:3)]
+# play_G_LD <- as.data.frame(play_G_LD)
+# 
+# play_Base_LD_G <- cbind(play_G_Base, play_G_LD)
+# fwrite(play_Base_LD_G, "Base_LD_G.csv", row.names = T)
+Base_LD_Diff_G <- read.csv("Base_LD_G_edited.csv")
+
+#G_KILI
+G_KILI <- matrix_KILI_ordered
+G_KILI[,c(1:15)] <- 0
+G_KILI[,c(17:18)] <- 0
+
+# play_G_KILI <- G_KILI[,-c(1:15)]
+# play_G_KILI <- play_G_KILI[,-c(2:3)]
+# play_G_KILI <- as.data.frame(play_G_KILI)
+# 
+# play_Base_KILI_G <- cbind(play_G_Base, play_G_KILI)
+# fwrite(play_Base_KILI_G, "Base_KILI_G.csv", row.names = T)
+Base_KILI_Diff_G <- read.csv("Base_KILI_G_edited.csv")
+
+#G_KDLD
+G_KDLD <- matrix_KDLD_ordered
+G_KDLD[,c(1:15)] <- 0
+G_KDLD[,c(17:18)] <- 0
+
+# play_G_KDLD <- G_KDLD[,-c(1:15)]
+# play_G_KDLD <- play_G_KDLD[,-c(2:3)]
+# play_G_KDLD <- as.data.frame(play_G_KDLD)
+# 
+# play_Base_KDLD_G <- cbind(play_G_Base, play_G_KDLD)
+# fwrite(play_Base_KDLD_G, "Base_KDLD_G.csv", row.names = T)
+Base_KDLD_Diff_G <- read.csv("Base_KDLD_G_edited.csv")
+
+#G_KILD
+G_KILD <- matrix_KILD_ordered
+G_KILD[,c(1:15)] <- 0
+G_KILD[,c(17:18)] <- 0
+
+# play_G_KILD <- G_KILD[,-c(1:15)]
+# play_G_KILD <- play_G_KILD[,-c(2:3)]
+# play_G_KILD <- as.data.frame(play_G_KILD)
+# 
+# play_Base_KILD_G <- cbind(play_G_Base, play_G_KILD)
+# fwrite(play_Base_KILD_G, "Base_KILD_G.csv", row.names = T)
+Base_KILD_Diff_G <- read.csv("Base_KILD_G_edited.csv")
+
+#G_KDLI
+G_KDLI <- matrix_KDLI_ordered
+G_KDLI[,c(1:15)] <- 0
+G_KDLI[,c(17:18)] <- 0
+
+# play_G_KDLI <- G_KDLI[,-c(1:15)]
+# play_G_KDLI <- play_G_KDLI[,-c(2:3)]
+# play_G_KDLI <- as.data.frame(play_G_KDLI)
+# 
+# play_Base_KDLI_G <- cbind(play_G_Base, play_G_KDLI)
+# fwrite(play_Base_KDLI_G, "Base_KDLI_G.csv", row.names = T)
+Base_KDLI_Diff_G <- read.csv("Base_KDLI_G_edited.csv")
+
+```
+
+Now make plots!
+
+```{r}
+legend_label <- c("1. Resource", "2. P.bolini", "3. K.anderssoni", "4. C.microdon", "5. G.fraseri", "6. E.carlsbergi", "7. G.braueri", "8. E.antarctica", "9. B.antarcticus", "10. N.achirus", "11. G.nicholsi", "12. P.antarcticum", "13. N.coatsi", "14. C. piriei", "15. P.gracilis", "16. C.gunnari", "17. D.eleginoides", "18. D.mawsoni" )
+
+#G_Base diff
+library(igraph)
+network_G_Base <- graph_from_adjacency_matrix(G_Base, weighted= TRUE, mode= "directed")
+V(network_G_Base)$size <- 10
+E(network_G_Base)$width <- E(network_G_Base)$weight/3000
+V(network_G_Base)$color <- "Black"
+vertex_attr(network_G_Base)
+V(network_G_Base)$label <- c(1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18)
+plot(network_G_Base, layout= layout.circle, vertex.label.color="white",vertex.label.cex=0.7, vertex.label.font= 2,
+     # main= "Biomass flow C.gunnari- Base",
+     edge.color="slategray",
+     edge.arrow.size = 0, vertex.label.family="Helvetica", vertex.label.dist= 0, vertex.label.degree= pi/2, edge.curved=.1)
+# legend(x= -1.5, y= 0.7, legend_label, col = "black", cex = 0.6, bty = "n", ncol=1)
+
+#G_KI diff
+
+network_G_KI <- graph_from_adjacency_matrix(G_KI, weighted= TRUE, mode= "directed")
+V(network_G_KI)$size <- 10
+E(network_G_KI)$width <- E(network_G_KI)$weight/3000
+V(network_G_KI)$color <- "black"
+
+cols <- c("purple", "orange","orange","orange","orange","orange","orange","orange","orange","orange","orange","orange","orange","orange","orange","orange","orange","orange")
+
+E(network_G_KI)$color <- cols
+V(network_G_KI)$label <- c(1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18)
+plot(network_G_KI, layout= layout.circle, vertex.label.color="white",vertex.label.cex=0.6,
+     main= "Biomass flow C.gunnari- KI",
+     edge.arrow.size = 0, vertex.label.family="Helvetica", vertex.label.dist= 0, vertex.label.degree= pi/2, edge.curved=.1)
+
+
+#G_KD diff
+
+network_G_KD <- graph_from_adjacency_matrix(G_KD, weighted= TRUE, mode= "directed")
+V(network_G_KD)$size <- 10
+E(network_G_KD)$width <- E(network_G_KD)$weight/3000
+V(network_G_KD)$color <- "black"
+vertex_attr(network_G_KD)
+V(network_G_KD)$label <- c(1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18)
+
+cols <- c("orange", "purple","purple", "purple", "purple", "purple","purple","purple","purple","purple","purple","purple","purple","purple","purple","purple","purple","purple")
+
+E(network_G_KD)$color <- cols
+plot(network_G_KD, layout= layout.circle, vertex.label.color="white",vertex.label.cex=0.6,
+     main= "Biomass flow C.gunnari- KD", 
+     edge.arrow.size = 0, vertex.label.family="Helvetica", vertex.label.dist= 0, vertex.label.degree= pi/2, edge.curved=.1)
+
+
+#G_LI DIFF
+
+network_G_LI <- graph_from_adjacency_matrix(G_LI, weighted= TRUE, mode= "directed")
+V(network_G_LI)$size <- 10
+E(network_G_LI)$width <- E(network_G_LI)$weight/3000
+V(network_G_LI)$color <- "black"
+
+cols <- c("orange","purple", "purple", "purple", "purple","purple","purple","purple","purple","purple","purple","purple","purple","purple","purple","purple","purple", "purple")
+
+E(network_G_LI)$color <- cols
+V(network_G_LI)$label <- c(1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18)
+plot(network_G_LI, layout= layout.circle, vertex.label.color="white",vertex.label.cex=0.6,
+     main= "Biomass flow C.gunnari- LI",
+     edge.arrow.size = 0, vertex.label.family="Helvetica", vertex.label.dist= 0, vertex.label.degree= pi/2, edge.curved=.1)
+
+#G_LD diff
+
+network_G_LD <- graph_from_adjacency_matrix(G_LD, weighted= TRUE, mode= "directed")
+V(network_G_LD)$size <- 10
+E(network_G_LD)$width <- E(network_G_LD)$weight/3000
+V(network_G_LD)$color <- "black"
+
+cols <- c("purple", "orange","orange","orange","orange","orange","orange","orange","orange","orange","orange","orange","orange","orange","orange","orange","orange","orange")
+
+E(network_G_LD)$color <- cols
+V(network_G_LD)$label <- c(1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18)
+plot(network_G_LD, layout= layout.circle, vertex.label.color="white",vertex.label.cex=0.6,
+     main= "Biomass flow C.gunnari- LD",
+     edge.arrow.size = 0, vertex.label.family="Helvetica", vertex.label.dist= 0, vertex.label.degree= pi/2, edge.curved=.1)
+
+#G_KILI_DIFF
+
+network_G_KILI <- graph_from_adjacency_matrix(G_KILI, weighted= TRUE, mode= "directed")
+V(network_G_KILI)$size <- 10
+E(network_G_KILI)$width <- E(network_G_KILI)$weight/3000
+
+cols <- c("purple","purple","purple","orange","orange","purple","orange","purple","orange","orange","orange","orange","orange","orange","orange","orange","orange","orange")
+
+E(network_G_KILI)$color <- cols
+V(network_G_KILI)$label <- c(1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18)
+V(network_G_KILI)$color <- "black"
+plot(network_G_KILI, layout= layout.circle, vertex.label.color="white",vertex.label.cex=0.6,
+     main= "Biomass flow C.gunnari- KI_LI",
+     edge.arrow.size = 0, vertex.label.family="Helvetica", vertex.label.dist= 0, vertex.label.degree= pi/2, edge.curved=.1)
+
+#E_KDLD_DIFF
+
+network_G_KDLD <- graph_from_adjacency_matrix(G_KDLD, weighted= TRUE, mode= "directed")
+V(network_G_KDLD)$size <- 10
+E(network_G_KDLD)$width <- E(network_G_KDLD)$weight/3000
+V(network_G_KDLD)$color <- "black"
+
+cols <- c("orange","orange","orange","purple","purple","orange","purple","orange","purple","purple","purple","purple","purple","purple","purple","purple","purple","purple")
+          
+E(network_G_KDLD)$color <- cols
+V(network_G_KDLD)$label <- c(1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18)
+plot(network_G_KDLD, layout= layout.circle, vertex.label.color="white",vertex.label.cex=0.6,
+     main= "Biomass flow C.gunnari- KD_LD",
+     edge.arrow.size = 0, vertex.label.family="Helvetica", vertex.label.dist= 0, vertex.label.degree= pi/2, edge.curved=.1)
+
+#G_KILD_DIFF
+
+network_G_KILD <- graph_from_adjacency_matrix(G_KILD, weighted= TRUE, mode= "directed")
+V(network_G_KILD)$size <- 10
+E(network_G_KILD)$width <- E(network_G_KILD)$weight/3000
+V(network_G_KILD)$color <- "black"
+
+cols <- c("purple", "orange","orange","orange","orange","orange","orange","orange","orange","orange","orange","orange","orange","orange","orange","orange","orange","orange")
+
+E(network_G_KILD)$color <- cols
+V(network_G_KILD)$label <- c(1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18)
+plot(network_G_KILD, layout= layout.circle, vertex.label.color="white",vertex.label.cex=0.6,
+     main= "Biomass flow C.gunnari- KI_LD",
+     edge.arrow.size = 0, vertex.label.family="Helvetica", vertex.label.dist= 0, vertex.label.degree= pi/2, edge.curved=.1)
+
+#E_KDLI_DIFF
+
+network_G_KDLI <- graph_from_adjacency_matrix(G_KDLI, weighted= TRUE, mode= "directed")
+V(network_G_KDLI)$size <- 10
+E(network_G_KDLI)$width <- E(network_G_KDLI)$weight/3000
+V(network_G_KDLI)$color <- "black"
+
+cols <- c("orange","purple", "purple", "purple", "purple","purple","purple","purple","purple","purple","purple","purple","purple","purple","purple","purple","purple", "purple")
+
+E(network_G_KDLI)$color <- cols
+V(network_G_KDLI)$label <- c(1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18)
+plot(network_G_KDLI, layout= layout.circle, vertex.label.color="white",vertex.label.cex=0.6,
+     main= "Biomass flow C.gunnari- KD_LI", 
+     edge.arrow.size = 0, vertex.label.family="Helvetica", vertex.label.dist= 0, vertex.label.degree= pi/2, edge.curved=.1)
+```
+
+
+

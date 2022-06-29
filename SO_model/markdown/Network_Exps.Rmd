@@ -1,0 +1,522 @@
+---
+title: "Network_plots"
+output: html_document
+---
+
+DIET MATRICES FIRST
+
+```{r}
+library(mizer)
+library(viridisLite)
+library(viridis)
+library(ggplot2)
+library(ggrepel)
+library(tidyverse)
+library(mizerExperimental)
+library(mizerHowTo)
+
+```
+
+```{r}
+library(data.table)
+
+# kappa (base, +5%, -5%) Lambda (base, +1/2%, -1/2%)
+kappa_2 <- c(0.256,0.2688,0.243)
+lambda_2 <- c(2.05,2.06,2.040)
+
+# kappa (base, +5%, -5%) Lambda (base, +5%, -5%)
+# kappa_5 <- c(0.256,0.2688,0.243)
+# lambda_5 <- c(2.05,2.153,1.948)
+
+# grid <- expand.grid(kappa = kappa_2, lambda= lambda_2)
+grid <- expand.grid(kappa = kappa_2, lambda= lambda_2)
+
+
+grid$name <- c("Base", "KI", "KD", "LI", "KI_LI", "KD_LI", "LD", "KI_LD", "KD_LD") 
+
+df_diet <- read.csv("df_diet_d.csv")
+df_diet$name <- as.factor(df_diet$name)
+grid$name <- as.factor(grid$name)
+df_diet2 <- left_join(df_diet, grid)
+```
+
+
+Base Model
+```{r}
+# Base <- readRDS("Base.Rdata")
+Base <- filter(df_diet2, name== "Base")
+colnames(Base) <- c("name", "Predator", "size", "Prey", "biomass","kappa","lambda")
+#summarise by biomass
+df_summary_Base <- Base %>% 
+  group_by(Predator, Prey) %>% 
+  summarise(totalbiomass = sum(biomass))
+#convert data frame to matrix
+##matrix_biomass_prey <- pivot_wider(df_summary, names_from = Prey, values_from = totalbiomass)
+matrix_biomass_Base <- pivot_wider(df_summary_Base, names_from = Predator, values_from = totalbiomass)
+#check format is in matrix form?
+Tmatrix_biomass_Base <- as.matrix(matrix_biomass_Base)
+#rename column with predator names
+rownames(Tmatrix_biomass_Base) <- Tmatrix_biomass_Base[,1]
+#remove column
+matrix_edit_Base <- Tmatrix_biomass_Base[,-1]
+#First add resource to column: (make square)
+resource_matrix_Base <- cbind(matrix_edit_Base, c(0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0))
+SOparams <- read.csv("SOparams.csv")
+colnames(resource_matrix_Base) <- SOparams[,1]
+
+#need to convert character matrix to numeric matrix to divide.
+
+
+#order params file
+SOparams_r <- SOparams[order(SOparams$w_inf),]
+rownames(SOparams_r) <- SOparams_r[,1]
+SOparams_r <- SOparams_r[,-1]
+#then order matrix
+#columns re-ordered
+matrix_Base_ordered <- select(as.data.frame(resource_matrix_Base),SOparams_r$species)
+matrix_Base_ordered <- as.matrix(select(as.data.frame(t(matrix_Base_ordered)),SOparams_r$species))
+#transpose back
+matrix_Base_ordered <- t(matrix_Base_ordered)
+
+
+```
+
+KI
+```{r}
+# KI <- readRDS("KI.Rdata")
+KI <- filter(df_diet2, name== "KI")
+# dim(df_test_Base)
+colnames(KI) <- c("name", "Predator", "size", "Prey", "biomass","kappa","lambda")
+#summarise by biomass
+df_summary_KI <- KI %>% 
+  group_by(Predator, Prey) %>% 
+  summarise(totalbiomass = sum(biomass))
+#convert data frame to matrix
+##matrix_biomass_prey <- pivot_wider(df_summary, names_from = Prey, values_from = totalbiomass)
+matrix_biomass_KI<- pivot_wider(df_summary_KI, names_from = Predator, values_from = totalbiomass)
+Tmatrix_biomass_KI <- as.matrix(matrix_biomass_KI)
+#rename column with predator names
+rownames(Tmatrix_biomass_KI) <- Tmatrix_biomass_KI[,1]
+#remove column
+matrix_edit_KI <- Tmatrix_biomass_KI[,-1] 
+#First add resource to column: (make square)
+resource_matrix_KI <- cbind(matrix_edit_KI, c(0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0))
+colnames(resource_matrix_KI) <- SOparams[,1]
+
+
+# order matrix
+matrix_KI_ordered <- select(as.data.frame(resource_matrix_KI),SOparams_r$species)
+matrix_KI_ordered <- as.matrix(select(as.data.frame(t(matrix_KI_ordered)),SOparams_r$species))
+#transpose back
+matrix_KI_ordered <- t(matrix_KI_ordered)
+
+
+```
+
+KD
+```{r}
+KD <- filter(df_diet2, name== "KD")
+# KD <- readRDS("KD.Rdata")
+
+colnames(KD) <- c("name", "Predator", "size", "Prey", "biomass","kappa","lambda")
+#summarise by biomass
+df_summary_KD <- KD %>% 
+  group_by(Predator, Prey) %>% 
+  summarise(totalbiomass = sum(biomass))
+#convert data frame to matrix
+##matrix_biomass_prey <- pivot_wider(df_summary, names_from = Prey, values_from = totalbiomass)
+matrix_biomass_KD <- pivot_wider(df_summary_KD, names_from = Predator, values_from = totalbiomass)
+#check format is in matrix form?
+##Tmatrix_biomass_prey <- as.matrix(matrix_biomass_prey)
+Tmatrix_biomass_KD <- as.matrix(matrix_biomass_KD)
+#rename column with predator names
+rownames(Tmatrix_biomass_KD) <- Tmatrix_biomass_KD[,1]
+#remove column
+matrix_edit_KD <- Tmatrix_biomass_KD[,-1] 
+#add resource to make square
+resource_matrix_KD <- cbind(matrix_edit_KD, c(0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0))
+colnames(resource_matrix_KD) <- SOparams[,1]
+
+
+#order by species
+#columns re-ordered
+matrix_KD_ordered <- select(as.data.frame(resource_matrix_KD),SOparams_r$species)
+matrix_KD_ordered <- as.matrix(select(as.data.frame(t(matrix_KD_ordered)),SOparams_r$species))
+#transpose back
+matrix_KD_ordered <- t(matrix_KD_ordered)
+
+
+```
+
+LI
+```{r}
+# LI <- readRDS("LI.Rdata")
+LI <- filter(df_diet2, name== "LI")
+colnames(LI) <- c("name", "Predator", "size", "Prey", "biomass","kappa","lambda")
+#summarise by biomass
+df_summary_LI <- LI %>% 
+  group_by(Predator, Prey) %>% 
+  summarise(totalbiomass = sum(biomass))
+#convert data frame to matrix
+##matrix_biomass_prey <- pivot_wider(df_summary, names_from = Prey, values_from = totalbiomass)
+matrix_biomass_LI <- pivot_wider(df_summary_LI, names_from = Predator, values_from = totalbiomass)
+#check format is in matrix form?
+##Tmatrix_biomass_prey <- as.matrix(matrix_biomass_prey)
+Tmatrix_biomass_LI <- as.matrix(matrix_biomass_LI)
+#rename column with predator names
+rownames(Tmatrix_biomass_LI) <- Tmatrix_biomass_LI[,1]
+#remove column
+matrix_edit_LI <- Tmatrix_biomass_LI[,-1] 
+#add resource to make square
+resource_matrix_LI <- cbind(matrix_edit_LI, c(0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0))
+colnames(resource_matrix_LI) <- SOparams[,1]
+
+
+#order by species
+#columns re-ordered
+matrix_LI_ordered <- select(as.data.frame(resource_matrix_LI),SOparams_r$species)
+matrix_LI_ordered <- as.matrix(select(as.data.frame(t(matrix_LI_ordered)),SOparams_r$species))
+#transpose back
+matrix_LI_ordered <- t(matrix_LI_ordered)
+
+
+
+```
+
+LD
+```{r}
+
+# LD <- readRDS("LD.Rdata")
+LD <- filter(df_diet2, name== "LD")
+colnames(LD) <- c("name", "Predator", "size", "Prey", "biomass","kappa","lambda")
+#summarise by biomass
+df_summary_LD <- LD %>% 
+  group_by(Predator, Prey) %>% 
+  summarise(totalbiomass = sum(biomass))
+#convert data frame to matrix
+##matrix_biomass_prey <- pivot_wider(df_summary, names_from = Prey, values_from = totalbiomass)
+matrix_biomass_LD <- pivot_wider(df_summary_LD, names_from = Predator, values_from = totalbiomass)
+#check format is in matrix form?
+##Tmatrix_biomass_prey <- as.matrix(matrix_biomass_prey)
+Tmatrix_biomass_LD <- as.matrix(matrix_biomass_LD)
+#rename column with predator names
+rownames(Tmatrix_biomass_LD) <- Tmatrix_biomass_LD[,1]
+#remove column
+matrix_edit_LD <- Tmatrix_biomass_LD[,-1] 
+#add resource to make square
+resource_matrix_LD <- cbind(matrix_edit_LD, c(0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0))
+colnames(resource_matrix_LD) <- SOparams[,1]
+
+
+#order by species
+#columns re-ordered
+matrix_LD_ordered <- select(as.data.frame(resource_matrix_LD),SOparams_r$species)
+matrix_LD_ordered <- as.matrix(select(as.data.frame(t(matrix_LD_ordered)),SOparams_r$species))
+#transpose back
+matrix_LD_ordered <- t(matrix_LD_ordered)
+
+
+```
+
+
+KI_LI
+```{r}
+
+# KI_LI <- readRDS("KI_LI.Rdata")
+KI_LI <- filter(df_diet2, name== "KI_LI")
+colnames(KI_LI) <- c("name", "Predator", "size", "Prey", "biomass","kappa","lambda")
+#summarise by biomass
+df_summary_KILI <- KI_LI %>% 
+  group_by(Predator, Prey) %>% 
+  summarise(totalbiomass = sum(biomass))
+#convert data frame to matrix
+##matrix_biomass_prey <- pivot_wider(df_summary, names_from = Prey, values_from = totalbiomass)
+matrix_biomass_KILI <- pivot_wider(df_summary_KILI, names_from = Predator, values_from = totalbiomass)
+#check format is in matrix form?
+##Tmatrix_biomass_prey <- as.matrix(matrix_biomass_prey)
+Tmatrix_biomass_KILI <- as.matrix(matrix_biomass_KILI)
+#rename column with predator names
+rownames(Tmatrix_biomass_KILI) <- Tmatrix_biomass_KILI[,1]
+#remove column
+matrix_edit_KILI <- Tmatrix_biomass_KILI[,-1] 
+#add resource to make square
+resource_matrix_KILI <- cbind(matrix_edit_KILI, c(0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0))
+colnames(resource_matrix_KILI) <- SOparams[,1]
+
+matrix_KILI_ordered <- select(as.data.frame(resource_matrix_KILI),SOparams_r$species)
+matrix_KILI_ordered <- as.matrix(select(as.data.frame(t(matrix_KILI_ordered)),SOparams_r$species))
+#transpose back
+matrix_KILI_ordered <- t(matrix_KILI_ordered)
+
+
+```
+
+KD_LD
+```{r}
+
+# KD_LD <- readRDS("KD_LD.Rdata")
+KD_LD <- filter(df_diet2, name== "KD_LD")
+
+colnames(KD_LD) <- c("name", "Predator", "size", "Prey", "biomass","kappa","lambda")
+#summarise by biomass
+df_summary_KDLD <- KD_LD %>% 
+  group_by(Predator, Prey) %>% 
+  summarise(totalbiomass = sum(biomass))
+#convert data frame to matrix
+##matrix_biomass_prey <- pivot_wider(df_summary, names_from = Prey, values_from = totalbiomass)
+matrix_biomass_KDLD <- pivot_wider(df_summary_KDLD, names_from = Predator, values_from = totalbiomass)
+#check format is in matrix form?
+##Tmatrix_biomass_prey <- as.matrix(matrix_biomass_prey)
+Tmatrix_biomass_KDLD <- as.matrix(matrix_biomass_KDLD)
+#rename column with predator names
+rownames(Tmatrix_biomass_KDLD) <- Tmatrix_biomass_KDLD[,1]
+#remove column
+matrix_edit_KDLD <- Tmatrix_biomass_KDLD[,-1] 
+#add resource to make square
+resource_matrix_KDLD <- cbind(matrix_edit_KDLD, c(0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0))
+colnames(resource_matrix_KDLD) <- SOparams[,1]
+
+matrix_KDLD_ordered <- select(as.data.frame(resource_matrix_KDLD),SOparams_r$species)
+matrix_KDLD_ordered <- as.matrix(select(as.data.frame(t(matrix_KDLD_ordered)),SOparams_r$species))
+#transpose back
+matrix_KDLD_ordered <- t(matrix_KDLD_ordered)
+
+```
+
+KD_LI
+
+```{r}
+
+KD_LI <- filter(df_diet2, name== "KD_LI")
+
+colnames(KD_LI) <- c("name", "Predator", "size", "Prey", "biomass","kappa","lambda")
+#summarise by biomass
+df_summary_KDLI <- KD_LI %>% 
+  group_by(Predator, Prey) %>% 
+  summarise(totalbiomass = sum(biomass))
+#convert data frame to matrix
+##matrix_biomass_prey <- pivot_wider(df_summary, names_from = Prey, values_from = totalbiomass)
+matrix_biomass_KDLI <- pivot_wider(df_summary_KDLI, names_from = Predator, values_from = totalbiomass)
+#check format is in matrix form?
+##Tmatrix_biomass_prey <- as.matrix(matrix_biomass_prey)
+Tmatrix_biomass_KDLI <- as.matrix(matrix_biomass_KDLI)
+#rename column with predator names
+rownames(Tmatrix_biomass_KDLI) <- Tmatrix_biomass_KDLI[,1]
+#remove column
+matrix_edit_KDLI <- Tmatrix_biomass_KDLI[,-1] 
+#add resource to make square
+resource_matrix_KDLI <- cbind(matrix_edit_KDLI, c(0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0))
+colnames(resource_matrix_KDLI) <- SOparams[,1]
+
+matrix_KDLI_ordered <- select(as.data.frame(resource_matrix_KDLI),SOparams_r$species)
+matrix_KDLI_ordered <- as.matrix(select(as.data.frame(t(matrix_KDLI_ordered)),SOparams_r$species))
+#transpose back
+matrix_KDLI_ordered <- t(matrix_KDLI_ordered)
+
+
+```
+
+
+KI_LD
+
+```{r}
+KI_LD <- filter(df_diet2, name== "KI_LD")
+
+colnames(KI_LD) <- c("name", "Predator", "size", "Prey", "biomass","kappa","lambda")
+#summarise by biomass
+df_summary_KILD <- KI_LD %>% 
+  group_by(Predator, Prey) %>% 
+  summarise(totalbiomass = sum(biomass))
+#convert data frame to matrix
+##matrix_biomass_prey <- pivot_wider(df_summary, names_from = Prey, values_from = totalbiomass)
+matrix_biomass_KILD <- pivot_wider(df_summary_KILD, names_from = Predator, values_from = totalbiomass)
+#check format is in matrix form?
+##Tmatrix_biomass_prey <- as.matrix(matrix_biomass_prey)
+Tmatrix_biomass_KILD <- as.matrix(matrix_biomass_KILD)
+#rename column with predator names
+rownames(Tmatrix_biomass_KILD) <- Tmatrix_biomass_KILD[,1]
+#remove column
+matrix_edit_KILD <- Tmatrix_biomass_KILD[,-1] 
+#add resource to make square
+resource_matrix_KILD <- cbind(matrix_edit_KILD, c(0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0))
+colnames(resource_matrix_KILD) <- SOparams[,1]
+
+matrix_KILD_ordered <- select(as.data.frame(resource_matrix_KILD),SOparams_r$species)
+matrix_KILD_ordered <- as.matrix(select(as.data.frame(t(matrix_KILD_ordered)),SOparams_r$species))
+#transpose back
+matrix_KILD_ordered <- t(matrix_KILD_ordered)
+```
+
+
+Plot them all!
+
+```{r}
+#plot network using matrix
+#matrix Base
+library(igraph)
+network_Base <- graph_from_adjacency_matrix(matrix_Base_ordered, weighted= TRUE, mode= "directed")
+V(network_Base)$size <- log(SOparams_r$w_inf)*3
+E(network_Base)$width <- E(network_Base)$weight/1500
+colfunc <- colorRampPalette(c("gray80", "darkred"))
+cols<-colfunc(18)
+V(network_Base)$color <- cols
+vertex_attr(network_Base)
+V(network_Base)$label <- c(1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18)
+#to change the edge colours: can do by colouring from the source 
+edge.start <- ends(network_Base, es=E(network_Base), names=F)[,1]
+edge.col <- V(network_Base)$color[edge.start]
+plot(network_Base, layout= layout.circle, vertex.label.color="black",vertex.label.cex=0.6,
+     main= "Biomass flow Base", edge.color=edge.col,
+     edge.arrow.size = 0.1, vertex.label.family="Helvetica", vertex.label.dist= 0, vertex.label.degree= pi/2, edge.curved=.1)
+legend(x=1.5, y= 0.4, c(V(network_Base)$name), col = cols, pch = 18, pt.bg = V(network_Base)$label, pt.cex =0.5, cex = 0.6, bty = "n", ncol=2)
+
+#matrix KI
+library(igraph)
+network_KI <- graph_from_adjacency_matrix(matrix_KI_ordered, weighted= TRUE, mode= "directed")
+V(network_KI)$size <- log(SOparams_r$w_inf)*3
+E(network_KI)$width <- (E(network_KI)$weight)/1500
+colfunc <- colorRampPalette(c("gray80", "darkred"))
+cols<-colfunc(18)
+V(network_KI)$color <- cols
+vertex_attr(network_KI)
+V(network_KI)$label <- c(1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18)
+#to change the edge colours: can do by colouring from the source 
+edge.start <- ends(network_KI, es=E(network_KI), names=F)[,1]
+edge.col <- V(network_KI)$color[edge.start]
+plot(network_KI, layout= layout.circle, vertex.label.color="black",vertex.label.cex=0.6,
+     main= "Biomass flow KI", edge.color=edge.col,
+     edge.arrow.size = 0.1, vertex.label.family="Helvetica", vertex.label.dist= 0, vertex.label.degree= pi/2, edge.curved=.1)
+legend(x=1.5, y= 0.4, c(V(network_KI)$name), col = cols, pch = 18, pt.bg = V(network_KI)$label, pt.cex =0.5, cex = 0.6, bty = "n", ncol=2)
+
+#matrix KD
+library(igraph)
+network_KD <- graph_from_adjacency_matrix(matrix_KD_ordered, weighted= TRUE, mode= "directed")
+V(network_KD)$size <- log(SOparams_r$w_inf)*3
+E(network_KD)$width <- E(network_KD)$weight/1500
+colfunc <- colorRampPalette(c("gray80", "darkred"))
+cols<-colfunc(18)
+V(network_KD)$color <- cols
+vertex_attr(network_KD)
+V(network_KD)$label <- c(1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18)
+#to change the edge colours: can do by colouring from the source 
+edge.start <- ends(network_KD, es=E(network_KD), names=F)[,1]
+edge.col <- V(network_KD)$color[edge.start]
+plot(network_KD, layout= layout.circle, vertex.label.color="black", vertex.label.cex=0.6,
+     main= "Biomass flow KD", edge.color= edge.col,
+     edge.arrow.size = 0.1, vertex.label.family="Helvetica", vertex.label.dist= 0, vertex.label.degree= pi/2, edge.curved=.1)
+legend(x=1.5, y= 0.4, c(V(network_KI)$name), col = cols, pch = 18, pt.bg = V(network_KI)$label, pt.cex =0.5, cex = 0.6, bty = "n", ncol=2)
+
+#matrix LI
+library(igraph)
+network_LI <- graph_from_adjacency_matrix(matrix_LI_ordered, weighted= TRUE, mode= "directed")
+V(network_LI)$size <- log(SOparams_r$w_inf)*3
+E(network_LI)$width <- E(network_LI)$weight/1500
+colfunc <- colorRampPalette(c("gray80", "darkred"))
+cols<-colfunc(18)
+V(network_LI)$color <- cols
+vertex_attr(network_LI)
+V(network_LI)$label <- c(1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18)
+#to change the edge colours: can do by colouring from the source 
+edge.start <- ends(network_LI, es=E(network_LI), names=F)[,1]
+edge.col <- V(network_LI)$color[edge.start]
+plot(network_LI, layout= layout.circle, vertex.label.color="black", vertex.label.cex=0.6,
+     main= "Biomass flow LI", edge.color= edge.col,
+     edge.arrow.size = 0.1, vertex.label.family="Helvetica", vertex.label.dist= 0, vertex.label.degree= pi/2, edge.curved=.1)
+legend(x=1.5, y= 0.4, c(V(network_LI)$name), col = cols, pch = 18, pt.bg = V(network_LI)$label, pt.cex =0.5, cex = 0.6, bty = "n", ncol=2)
+
+#matrix LD
+library(igraph)
+network_LD <- graph_from_adjacency_matrix(matrix_LD_ordered, weighted= TRUE, mode= "directed")
+V(network_LD)$size <- log(SOparams_r$w_inf)*3
+E(network_LD)$width <- E(network_LD)$weight/1500
+colfunc <- colorRampPalette(c("gray80", "darkred"))
+cols<-colfunc(18)
+V(network_LD)$color <- cols
+vertex_attr(network_LD)
+V(network_LD)$label <- c(1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18)
+#to change the edge colours: can do by colouring from the source 
+edge.start <- ends(network_LD, es=E(network_LD), names=F)[,1]
+edge.col <- V(network_LD)$color[edge.start]
+plot(network_LD, layout= layout.circle, vertex.label.color="black", vertex.label.cex=0.6,
+     main= "Biomass flow LD", edge.color= edge.col,
+     edge.arrow.size = 0.1, vertex.label.family="Helvetica", vertex.label.dist= 0, vertex.label.degree= pi/2, edge.curved=.1)
+legend(x=1.5, y= 0.4, c(V(network_LD)$name), col = cols, pch = 18, pt.bg = V(network_LD)$label, pt.cex =0.5, cex = 0.6, bty = "n", ncol=2)
+
+
+#matrix KI_LI
+
+library(igraph)
+network_KILI <- graph_from_adjacency_matrix(matrix_KILI_ordered, weighted= TRUE, mode= "directed")
+V(network_KILI)$size <- log(SOparams_r$w_inf)*3
+E(network_KILI)$width <- E(network_KILI)$weight/1500
+colfunc <- colorRampPalette(c("gray80", "darkred"))
+cols<-colfunc(18)
+V(network_KILI)$color <- cols
+vertex_attr(network_KILI)
+V(network_KILI)$label <- c(1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18)
+#to change the edge colours: can do by colouring from the source 
+edge.start <- ends(network_KILI, es=E(network_KILI), names=F)[,1]
+edge.col <- V(network_KILI)$color[edge.start]
+plot(network_KILI, layout= layout.circle, vertex.label.color="black",vertex.label.cex=0.6,
+     main= "Biomass flow KILI", edge.color=edge.col,
+     edge.arrow.size = 0.1, vertex.label.family="Helvetica", vertex.label.dist= 0, vertex.label.degree= pi/2, edge.curved=.1)
+legend(x=1.5, y= 0.4, c(V(network_KILI)$name), col = cols, pch = 18, pt.bg = V(network_KILI)$label, pt.cex =0.5, cex = 0.6, bty = "n", ncol=2)
+
+#matrix KD_LD
+
+library(igraph)
+network_KDLD <- graph_from_adjacency_matrix(matrix_KDLD_ordered, weighted= TRUE, mode= "directed")
+V(network_KDLD)$size <- log(SOparams_r$w_inf)*3
+E(network_KDLD)$width <- E(network_KDLD)$weight/1500
+colfunc <- colorRampPalette(c("gray80", "darkred"))
+cols<-colfunc(18)
+V(network_KDLD)$color <- cols
+vertex_attr(network_KDLD)
+V(network_KDLD)$label <- c(1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18)
+#to change the edge colours: can do by colouring from the source 
+edge.start <- ends(network_KDLD, es=E(network_KDLD), names=F)[,1]
+edge.col <- V(network_KDLD)$color[edge.start]
+plot(network_KDLD, layout= layout.circle, vertex.label.color="black",vertex.label.cex=0.6,
+     main= "Biomass flow KDLD", edge.color=edge.col,
+     edge.arrow.size = 0.1, vertex.label.family="Helvetica", vertex.label.dist= 0, vertex.label.degree= pi/2, edge.curved=.1)
+legend(x=1.5, y= 0.4, c(V(network_KDLD)$name), col = cols, pch = 18, pt.bg = V(network_KDLD)$label, pt.cex =0.5, cex = 0.6, bty = "n", ncol=2)
+
+#matrix_KILD
+network_KILD <- graph_from_adjacency_matrix(matrix_KILD_ordered, weighted= TRUE, mode= "directed")
+V(network_KILD)$size <- log(SOparams_r$w_inf)*3
+E(network_KILD)$width <- E(network_KILD)$weight/1500
+colfunc <- colorRampPalette(c("gray80", "darkred"))
+cols<-colfunc(18)
+V(network_KILD)$color <- cols
+vertex_attr(network_KILD)
+V(network_KILD)$label <- c(1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18)
+#to change the edge colours: can do by colouring from the source 
+edge.start <- ends(network_KILD, es=E(network_KILD), names=F)[,1]
+edge.col <- V(network_KILD)$color[edge.start]
+plot(network_KILD, layout= layout.circle, vertex.label.color="black",vertex.label.cex=0.6,
+     main= "Biomass flow KILD", edge.color=edge.col,
+     edge.arrow.size = 0.1, vertex.label.family="Helvetica", vertex.label.dist= 0, vertex.label.degree= pi/2, edge.curved=.1)
+legend(x=1.5, y= 0.4, c(V(network_KILD)$name), col = cols, pch = 18, pt.bg = V(network_KILD)$label, pt.cex =0.5, cex = 0.6, bty = "n", ncol=2)
+
+#matrix_KDLI
+network_KDLI <- graph_from_adjacency_matrix(matrix_KDLI_ordered, weighted= TRUE, mode= "directed")
+V(network_KDLI)$size <- log(SOparams_r$w_inf)*3
+E(network_KDLI)$width <- E(network_KDLI)$weight/1500
+colfunc <- colorRampPalette(c("gray80", "darkred"))
+cols<-colfunc(18)
+V(network_KDLI)$color <- cols
+vertex_attr(network_KDLI)
+V(network_KDLI)$label <- c(1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18)
+#to change the edge colours: can do by colouring from the source 
+edge.start <- ends(network_KDLI, es=E(network_KDLI), names=F)[,1]
+edge.col <- V(network_KDLI)$color[edge.start]
+plot(network_KDLI, layout= layout.circle, vertex.label.color="black",vertex.label.cex=0.6,
+     main= "Biomass flow KDLI", edge.color=edge.col,
+     edge.arrow.size = 0.1, vertex.label.family="Helvetica", vertex.label.dist= 0, vertex.label.degree= pi/2, edge.curved=.1)
+legend(x=1.5, y= 0.4, c(V(network_KDLI)$name), col = cols, pch = 18, pt.bg = V(network_KDLI)$label, pt.cex =0.5, cex = 0.6, bty = "n", ncol=2)
+
+
+```
+
+
+

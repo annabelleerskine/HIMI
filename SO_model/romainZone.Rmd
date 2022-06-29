@@ -1,0 +1,32 @@
+---
+title: "workstation"
+author: "RF"
+---
+
+
+rebuilding the southern ocean model
+
+toothfish is Dissostichus eleginoides or D.eleginoides in model
+
+2 rds are simulations
+
+```{r}
+
+sim1 <- readRDS("sim_loop4.rds")
+
+sim1@params@species_params$species
+
+plot(sim1)
+
+```
+
+
+```{r}
+
+sim2 <- readRDS("sim_optim_e.RDS")
+
+plot(sim2)
+
+
+```
+

@@ -1,0 +1,1061 @@
+---
+title: "Experiments"
+output: html_document
+---
+
+Packages & model
+
+```{r}
+
+# library(mizer)
+library(viridisLite)
+library(viridis)
+library(ggplot2)
+library(ggrepel)
+library(tidyverse)
+library(mizerExperimental)
+library(mizerHowTo)
+
+sim_loop4 <- readRDS("sim_loop4.rds")
+
+# remotes::install_github("sizespectrum/mizerHowTo")
+# install.packages("mizer")
+```
+
+ignore: Theory stuff
+```{r}
+
+w<-seq(0.1,100, 0.1)
+
+#changing lambda
+
+plot(w, 0.5*w^-1,log="xy") #normal
+points(w, 0.5*w^-2, col= "red") #increase lambda
+points(w, 0.5*w^-0.5, col= "blue") #decrease lambda
+points(w, 1*w^-1, col= "orange") #increase Kappa
+points(w, 0.1*w^-1, col= "green")
+
+#nolog lambda
+plot(w, 0.5*w^-1, lm="xy") #normal
+points(w, 0.5*w^-2, col= "red") #increase lambda
+points(w, 0.5*w^-0.5, col= "blue")
+
+#changing Kappa
+plot(w, 0.5*w^-2,log="xy") #normal
+points(w, 0.9*w^-2, col= "orange") #increase Kappa
+points(w, 0.05*w^-2, col= "green") #decrease Kappa
+
+```
+
+
+ignore: Customising base graphs
+```{r}
+
+params <- sim_loop4@params@species_params
+params_ordered <- params[order(params$w_inf),]
+# inter <- select(as.data.frame(sim_loop4@params@interaction), params_ordered$species)
+# inter <- as.matrix(select(as.data.frame(t(inter)), params_ordered$species))
+# inter <- t(inter)
+#
+# species_params(sim_loop4@params) <- params_ordered
+# sim_loop4@params@interaction <- inter
+
+sim_loop4 <-upgradeParams(sim_loop4@params)
+
+plotSpectra(sim_loop4, total= T, power= 0) #for abundance plot, power= 0
+
+spectrplot <- plotSpectra(sim_loop4, total= T, power= 0) # save as object to fix aestheticcss
+
+library(colorspace)
+col <- rainbow_hcl(19)
+
+spectrplot + scale_color_manual(breaks = c("Resource", "Total", "P.bolini", "K.anderssoni", "C.microdon", "G.fraseri", "E.carlsbergi", "G.braueri", "E.antarctica", "B.antarcticus", "N.achirus", "G.nicholsi", "P.antarcticum", "N.coatsi", "C.pirei", "P.gracilis", "C.gunnari", "D.eleginoides", "D.mawsoni"), values= c("green", "grey", "#D79F7D", "#CAA66E", "#B9AC65", "#A5B266", "#8FB770", "#75BB80", "#5ABD94", "#41BEA7", "#38BDBA", "#49BACA", "#68B5D7", "#88AEDF", "#A5A6E2", "#BD9EDF", "#D098D7", "#DD94C9", "#E393B8")) + scale_x_log10(limits= c(1e-6, 1e+06)) + labs( x="Weight (g)") + theme_classic() + scale_linetype_manual(breaks = c("Resource", "Total", "P.bolini", "K.anderssoni", "C.microdon", "G.fraseri", "E.carlsbergi", "G.braueri", "E.antarctica", "B.antarcticus", "N.achirus", "G.nicholsi", "P.antarcticum", "N.coatsi", "C.pirei", "P.gracilis", "C.gunnari", "D.eleginoides", "D.mawsoni"), values= c("solid", "dashed", "solid", "solid","solid","solid","solid","solid","solid","solid","solid","solid","solid","solid","solid","solid","solid","solid","solid"))
+                                                                                                                                                                                                        
+
+# c(1e-12,1e-9,1e-6,1e-3,1e0,1e3,1e6)
+
+# #normalised abundance spectrum. Fit straight line, slope should be ~-2
+# 
+# getCommunitySlope(sim_loop4, biomass= F, min_w= 10)[301,]
+# #does this include the resource spectra as well?
+```
+
+
+ignore: Bring in model and check it is at equilibrium (are biomass values changing)
+
+```{r}
+
+sim_loop <- readRDS("sim_optim_e.RDS")
+params <- upgradeParams(sim_loop@params)
+
+initialN(params) <- sim_loop@n[dim(sim_loop@n)[1],,]
+initialNResource(params) <- sim_loop@n_pp[dim(sim_loop@n_pp)[1],]
+sim_loop2 <- project(params, effort=0, t_max=300, progress_bar = F)
+
+params <- sim_loop2@params
+projectToSteady(params)
+initialN(params) <- sim_loop2@n[dim(sim_loop2@n)[1],,]
+initialNResource(params) <- sim_loop2@n_pp[dim(sim_loop2@n_pp)[1],]
+sim_loop3 <- project(params, effort=0, t_max=300, progress_bar = F)
+
+params <- sim_loop3@params
+projectToSteady(params)
+initialN(params) <- sim_loop3@n[dim(sim_loop3@n)[1],,]
+initialNResource(params) <- sim_loop3@n_pp[dim(sim_loop3@n_pp)[1],]
+sim_loop4 <- project(params, effort=0, t_max=300, progress_bar = F)
+
+plotBiomass(sim_loop2)
+plotBiomass(sim_loop3)
+plotBiomass(sim_loop4)
+plotSpectra(sim_loop4)
+
+sim_loop@params@species_params
+sim_loop@params@species_params$w_min
+# saveRDS(sim_loop4, "sim_loop4.rds")
+
+#definitely reaching equlillibrium (probably by sim_loop3)
+
+```
+
+
+Creating grid for experiments
+```{r}
+library(data.table)
+
+# kappa (base, +5%, -5%) Lambda (base, +1/2%, -1/2%)
+kappa_2 <- c(0.256,0.2688,0.243)
+lambda_2 <- c(2.05,2.06,2.040)
+
+# kappa (base, +5%, -5%) Lambda (base, +5%, -5%)
+# kappa_5 <- c(0.256,0.2688,0.243)
+# lambda_5 <- c(2.05,2.153,1.948)
+
+# grid <- expand.grid(kappa = kappa_2, lambda= lambda_2)
+grid <- expand.grid(kappa = kappa_2, lambda= lambda_2)
+fwrite(grid, "grid.csv")
+
+grid$name <- c("Base", "KI", "KD", "LI", "KI_LI", "KD_LI", "LD", "KI_LD", "KD_LD") 
+```
+
+Experiment loop
+```{r}
+
+#why does this have to be species params, not just whole params file?
+params <- sim_loop4@params #  replace with your param file
+# inter <- sim_loop2@params@interaction
+
+max_t <- 50 # How long you want sims to run
+
+output <- # create output object with grid
+  grid %>%
+  group_by(name)%>% # group by model scenario (i.e. name)
+  nest() %>% # create nested object
+  mutate(param_list = map(data, ~setResource(params, kappa = .$kappa,lambda = .$lambda))) %>% 
+  mutate(param_list2 = map(param_list, ~projectToSteady(., effort=0, t_max= max_t, progress_bar= F))) %>% # run model projection
+  mutate(mod_output = map(param_list2, ~project(., effort=0, t_max= max_t, progress_bar= F))) %>% # run model projection
+  mutate(biomass = map(mod_output, ~reshape::melt(getBiomass(.)))) %>% 
+  mutate(diet = map(param_list2, ~reshape::melt(getDiet(., proportion= F)))) %>% 
+  # mutate(n= map(mod_output, ~reshape::melt(getN(.)))) %>% 
+    mutate(n= map(mod_output, ~reshape::melt((.@n[1,,])))) %>% 
+  mutate(n_pp = map(mod_output, ~.@n_pp[1,])) ##shit what is the n_pp or is there no function for this?
+
+output %>%
+  select(name, biomass) %>% #choose only the name and biomass dataframes
+  unnest(biomass) %>%
+  fwrite("df_Biomass_b.csv") # save a biomass dataframe with all the combined scenarios
+
+output %>%
+select(name, diet) %>% 
+  unnest(diet) %>%
+  fwrite("df_diet_d.csv") 
+
+output %>% 
+  select(name, n) %>% 
+  unnest(n) %>% 
+  fwrite("df_n.csv")
+
+output %>% 
+  select(name, n_pp) %>% 
+  unnest(n_pp) %>% 
+  fwrite("df_n_pp.csv")
+
+
+df_biomass <- read.csv("df_Biomass_b.csv")
+df_biomass$name <- as.factor(df_biomass$name)
+grid$name <- as.factor(grid$name)
+df_plot <- left_join(df_biomass, grid)
+
+df_diet <- read.csv("df_diet_d.csv")
+df_diet$name <- as.factor(df_diet$name)
+grid$name <- as.factor(grid$name)
+df_diet2 <- left_join(df_diet, grid)
+
+```
+ 
+ n and n_pp
+```{r}
+df_n <- read.csv("df_n.csv")
+
+df_n_pp <- read.csv("df_n_pp.csv")
+
+weights <- sim_loop4@params@w_full
+weights_scenarios <- rep(weights,9)
+
+df_plot_npp <- cbind(df_n_pp, weights_scenarios)
+
+
+library(ggplot2)
+
+#resource 
+
+ggplot(df_plot_npp, aes(x=log(weights_scenarios), y=log(n_pp), colour = name)) +
+  # facet_wrap(~name) + 
+    theme_classic() + geom_smooth(method="lm",size=0.3)
+
+#fish community
+
+df_facet <- df_n %>%
+  group_by(name, w) %>%
+  summarise(total_n = sum(value)) %>%
+  ungroup()
+
+ggplot(df_facet, aes(x=log(w), y=log(total_n), colour = name)) +
+  # facet_wrap(~name) + 
+    theme_classic() + geom_point() +
+   geom_smooth(method = "lm", alpha = 0, size = 0.1)
+# +  scale_x_log10() +scale_y_log10()
+#sizespectra coeffiients (slope)
+
+test_1 <- df_facet %>% filter(name=="Base") %>% select(total_n)
+test_2 <- df_facet %>% filter(name=="KI_LI") %>% select(total_n)
+
+identical(test_1$total_n,test_2$total_n)
+
+
+```
+
+
+New plot- relative change of abundance spectra (fish)
+
+```{r}
+df_all <- df_facet
+# library(data.table)
+# fwrite(df_1, "df_1.csv")
+weight <- df_all[,2]
+df_1 <- df_all
+
+df_Base <- dplyr::filter(df_1, name== "Base")
+df_KD <- dplyr::filter(df_1, name== "KD")
+df_KI <- dplyr::filter(df_1, name== "KI")
+df_LD <- dplyr::filter(df_1, name== "LD")
+df_LI <- dplyr::filter(df_1, name== "LI")
+df_KILI <- dplyr::filter(df_1, name== "KI_LI")
+df_KDLD <- dplyr::filter(df_1, name== "KD_LD")
+df_KILD <- dplyr::filter(df_1, name== "KI_LD")
+df_KDLI <- dplyr::filter(df_1, name== "KD_LI")
+
+#relative values
+
+Base <- as.data.frame((df_Base$total_n/df_Base$total_n)-1)
+KD <- as.data.frame((df_KD$total_n/df_Base$total_n)-1)
+KI <- as.data.frame((df_KI$total_n/df_Base$total_n)-1)
+LD <- as.data.frame((df_LD$total_n/df_Base$total_n)-1)
+LI <- as.data.frame((df_LI$total_n/df_Base$total_n)-1)
+KILI <- as.data.frame((df_KILI$total_n/df_Base$total_n)-1)
+KDLD <- as.data.frame((df_KDLD$total_n/df_Base$total_n)-1)
+KILD <- as.data.frame((df_KILD$total_n/df_Base$total_n)-1)
+KDLI <- as.data.frame((df_KDLI$total_n/df_Base$total_n)-1)
+
+#removing weird first point
+# Base <- slice(Base, -1)
+# KD <- slice(KD, -1)
+# KI <- slice(KI, -1)
+# LD <- slice(LD, -1)
+# LI <- slice(LI, -1)
+# KILI <- slice(KILI, -1)
+# KDLD <- slice(KDLD,-1)
+# KILD <- slice(KILD, -1)
+# KDLI <- slice(KDLI, -1)
+# weight <- slice(weight, c(-1,-101,-201,-301,-401,-501,-601,-701,-801))
+
+df_all_relative <- cbind(Base, KD, KI ,LD ,LI , KILI,
+                         KDLD, KILD, KDLI)
+colnames(df_all_relative) <- c("Base", "KD", "KI" ,"LD" ,"LI" , "KILI",
+                         "KDLD", "KILD", "KDLI")
+df_all_relative <- reshape::melt(df_all_relative)
+df_all_relative <- cbind(weight, df_all_relative)
+
+df_tidy <- df_all_relative %>% 
+  dplyr::mutate(Param_Type = case_when(variable == "KI" ~ "kappa",
+                                       variable == "KD" ~ "kappa",
+                                       variable == "LI" ~ "lambda",
+                                       variable == "LD" ~ "lambda",
+                                       variable == "KILI" ~ "interaction",
+                                       variable == "KILD" ~ "interaction",
+                                       variable == "KDLI" ~ "interaction",
+                                       variable == "KDLD" ~ "interaction")) %>% 
+  filter(!variable=="Base") %>% 
+  mutate(param = fct_relevel(Param_Type, "kappa", "lambda", "interaction"))
+
+df_tidy$variable <- factor(as.factor(df_tidy$variable),levels = c("KILI", "KI","LI","KILD","Base","KDLI", "LD","KD","KDLD"))
+
+plot <- ggplot(df_tidy, aes(x= w, y= value*100, colour= variable)) + geom_line() + scale_x_log10(breaks= c(1e-4, 1e-3,1e-2,1e-1,1,1e1,1e2,1e3,1e4,1e5)) + labs(y=" % Change in community abundance", x="Size (log(weight)") + scale_color_manual(values=c("#B35806", "#E08214", "#FDB863", "#FEE0B6" ,"#D8DAEB", "#B2ABD2", "#8073AC", "#542788")) + theme_bw() + facet_grid(rows= "param")
+
+plot + theme(strip.background = element_rect(fill= "white")) 
+
+
+```
+
+Species abundance changes over time: 3 commerical species
+```{r}
+
+df_species <- df_n
+weights_1 <- df_KI_1[,3] #weights for all
+
+df_n_2 <- filter(df_n, sp== "C.gunnari")
+df_Base_2 <- filter(df_n_2, name== "Base")
+df_KI_2 <- dplyr::filter(df_n_2, name== "KI")
+KI_2 <- as.data.frame((df_KI_2$value/df_Base_2$value)-1) #relative value
+KI_2 <- cbind(weights_1, KI_2)
+colnames(KI_2) <- c("weight","value")
+
+df_n_3 <- filter(df_n, sp== "D.eleginoides")
+df_Base_3 <- filter(df_n_3, name== "Base")
+df_KI_3 <- dplyr::filter(df_n_3, name== "KI")
+KI_3 <- as.data.frame((df_KI_3$value/df_Base_3$value)-1) #relative value
+KI_3 <- cbind(weights_1, KI_3)
+colnames(KI_3) <- c("weight","value")
+
+df_n_4 <- filter(df_n, sp== "D.mawsoni")
+df_Base_4 <- filter(df_n_4, name== "Base")
+df_KI_4 <- dplyr::filter(df_n_4, name== "KI")
+KI_4 <- as.data.frame((df_KI_4$value/df_Base_4$value)-1) 
+KI_4 <- cbind(weights_1, KI_4)
+colnames(KI_4) <- c("weight","value")
+
+# df_all_relative <- cbind(KI_1,KI_2, KI_3, KI_4)
+# colnames(df_all_relative) <- c("P.Bolini","C.gunnari","D.eleginoides", "D.mawsoni")
+
+plot <- KI_1 %>% ggplot(mapping=aes(x= weight, y= value)) + geom_line(colour= "green") +
+  geom_line(data= KI_2, aes(x= weight, y= value), colour="blue") +
+  geom_line(data= KI_3, aes(x= weight, y= value), colour= "yellow") +
+  geom_line(data= KI_4, aes(x= weight, y= value), colour="pink") +
+  scale_x_log10() + labs(y=" % Change in abundance", x="Size (log(weight)") + theme_bw()
+
+plot
+
+
+
+
+```
+species abundance changes: ALL!! 
+```{r}
+df_species <- df_n
+
+df_n_1 <- filter(df_n, sp== "P.bolini")
+df_Base_1 <- filter(df_n_1, name== "Base")
+df_KI_1 <- dplyr::filter(df_n_1, name== "KI")
+weights_1 <- df_KI_1[,3] #weights for all
+KI_1 <- as.data.frame((df_KI_1$value/df_Base_1$value)-1) #relative value
+KI_1 <- cbind(weights_1, KI_1)
+colnames(KI_1) <- c("weight","value")
+
+df_n_2 <- filter(df_n, sp== "K.anderssoni")
+df_Base_2 <- filter(df_n_2, name== "Base")
+df_KI_2 <- dplyr::filter(df_n_2, name== "KI")
+KI_2 <- as.data.frame((df_KI_2$value/df_Base_2$value)-1) #relative value
+KI_2 <- cbind(weights_1, KI_2)
+colnames(KI_2) <- c("weight","value")
+
+df_n_3 <- filter(df_n, sp== "C.microdon")
+df_Base_3 <- filter(df_n_3, name== "Base")
+df_KI_3 <- dplyr::filter(df_n_3, name== "KI")
+KI_3 <- as.data.frame((df_KI_3$value/df_Base_3$value)-1) #relative value
+KI_3 <- cbind(weights_1, KI_3)
+colnames(KI_3) <- c("weight","value")
+
+df_n_4 <- filter(df_n, sp== "G.fraseri")
+df_Base_4 <- filter(df_n_4, name== "Base")
+df_KI_4 <- dplyr::filter(df_n_4, name== "KI")
+KI_4 <- as.data.frame((df_KI_4$value/df_Base_4$value)-1) 
+KI_4 <- cbind(weights_1, KI_4)
+colnames(KI_4) <- c("weight","value")
+
+df_n_5 <- filter(df_n, sp== "E.carlsbergi")
+df_Base_5 <- filter(df_n_5, name== "Base")
+df_KI_5 <- dplyr::filter(df_n_5, name== "KI")
+KI_5 <- as.data.frame((df_KI_5$value/df_Base_5$value)-1) 
+KI_5 <- cbind(weights_1, KI_5)
+colnames(KI_5) <- c("weight","value")
+
+df_n_6 <- filter(df_n, sp== "G.braueri")
+df_Base_6 <- filter(df_n_6, name== "Base")
+df_KI_6 <- dplyr::filter(df_n_6, name== "KI")
+KI_6 <- as.data.frame((df_KI_6$value/df_Base_6$value)-1) 
+KI_6 <- cbind(weights_1, KI_6)
+colnames(KI_6) <- c("weight","value")
+
+df_n_7 <- filter(df_n, sp== "E.antarctica")
+df_Base_7 <- filter(df_n_7, name== "Base")
+df_KI_7 <- dplyr::filter(df_n_7, name== "KI")
+KI_7 <- as.data.frame((df_KI_7$value/df_Base_7$value)-1) 
+KI_7 <- cbind(weights_1, KI_7)
+colnames(KI_7) <- c("weight","value")
+
+df_n_8 <- filter(df_n, sp== "B.antarcticus")
+df_Base_8 <- filter(df_n_8, name== "Base")
+df_KI_8 <- dplyr::filter(df_n_8, name== "KI")
+KI_8 <- as.data.frame((df_KI_8$value/df_Base_8$value)-1) 
+KI_8 <- cbind(weights_1, KI_8)
+colnames(KI_8) <- c("weight","value")
+
+df_n_9 <- filter(df_n, sp== "N.achirus")
+df_Base_9 <- filter(df_n_9, name== "Base")
+df_KI_9 <- dplyr::filter(df_n_9, name== "KI")
+KI_9 <- as.data.frame((df_KI_9$value/df_Base_9$value)-1) 
+KI_9 <- cbind(weights_1, KI_9)
+colnames(KI_9) <- c("weight","value")
+
+df_n_10 <- filter(df_n, sp== "G.nicholsi")
+df_Base_10 <- filter(df_n_10, name== "Base")
+df_KI_10 <- dplyr::filter(df_n_10, name== "KI")
+KI_10 <- as.data.frame((df_KI_10$value/df_Base_10$value)-1) 
+KI_10 <- cbind(weights_1, KI_10)
+colnames(KI_10) <- c("weight","value")
+
+df_n_11 <- filter(df_n, sp== "P.antarcticum")
+df_Base_11 <- filter(df_n_11, name== "Base")
+df_KI_11 <- dplyr::filter(df_n_11, name== "KI")
+KI_11 <- as.data.frame((df_KI_11$value/df_Base_11$value)-1) 
+KI_11 <- cbind(weights_1, KI_11)
+colnames(KI_11) <- c("weight","value")
+
+df_n_12 <- filter(df_n, sp== "N.coatsi")
+df_Base_12 <- filter(df_n_12, name== "Base")
+df_KI_12 <- dplyr::filter(df_n_12, name== "KI")
+KI_12 <- as.data.frame((df_KI_12$value/df_Base_12$value)-1) 
+KI_12 <- cbind(weights_1, KI_12)
+colnames(KI_12) <- c("weight","value")
+
+df_n_13 <- filter(df_n, sp== "C.piriei")
+df_Base_13 <- filter(df_n_13, name== "Base")
+df_KI_13 <- dplyr::filter(df_n_13, name== "KI")
+KI_13 <- as.data.frame((df_KI_13$value/df_Base_13$value)-1) 
+KI_13 <- cbind(weights_1, KI_13)
+colnames(KI_13) <- c("weight","value")
+
+df_n_14 <- filter(df_n, sp== "P.gracilis")
+df_Base_14 <- filter(df_n_14, name== "Base")
+df_KI_14 <- dplyr::filter(df_n_14, name== "KI")
+KI_14 <- as.data.frame((df_KI_14$value/df_Base_14$value)-1) 
+KI_14 <- cbind(weights_1, KI_14)
+colnames(KI_14) <- c("weight","value")
+
+df_n_15 <- filter(df_n, sp== "C.gunnari")
+df_Base_15 <- filter(df_n_15, name== "Base")
+df_KI_15 <- dplyr::filter(df_n_15, name== "KI")
+KI_15 <- as.data.frame((df_KI_15$value/df_Base_15$value)-1) 
+KI_15 <- cbind(weights_1, KI_15)
+colnames(KI_15) <- c("weight","value")
+
+df_n_16 <- filter(df_n, sp== "D.eleginoides")
+df_Base_16 <- filter(df_n_16, name== "Base")
+df_KI_16 <- dplyr::filter(df_n_16, name== "KI")
+KI_16 <- as.data.frame((df_KI_16$value/df_Base_16$value)-1) 
+KI_16 <- cbind(weights_1, KI_16)
+colnames(KI_16) <- c("weight","value")
+
+df_n_17 <- filter(df_n, sp== "D.mawsoni")
+df_Base_17 <- filter(df_n_17, name== "Base")
+df_KI_17 <- dplyr::filter(df_n_17, name== "KI")
+KI_17 <- as.data.frame((df_KI_17$value/df_Base_17$value)-1) 
+KI_17 <- cbind(weights_1, KI_17)
+colnames(KI_17) <- c("weight","value")
+
+library(ggplot2)
+
+plota <- KI_1 %>% ggplot(mapping=aes(x= weight, y= value*100)) + geom_line(colour= "#D79F7D") +
+  geom_line(data= KI_2, aes(x= weight, y= value*100), colour="#CAA66E") +
+  geom_line(data= KI_3, aes(x= weight, y= value*100), colour= "#B9AC65") +
+  geom_line(data= KI_4, aes(x= weight, y= value*100),colour= "#A5B266" ) +
+  geom_line(data= KI_5, aes(x= weight, y= value*100),colour= "#8FB770") +
+  geom_line(data= KI_6, aes(x= weight, y= value*100), colour= "#75BB80") +
+  geom_line(data= KI_7, aes(x= weight, y= value*100), colour="#5ABD94") +
+  geom_line(data= KI_8, aes(x= weight, y= value*100), colour="#41BEA7") +
+  geom_line(data= KI_9, aes(x= weight, y= value*100), colour= "#38BDBA") +
+  geom_line(data= KI_10, aes(x= weight, y= value*100),colour= "#49BACA") +
+  geom_line(data= KI_11, aes(x= weight, y= value*100),colour="#68B5D7") +
+  geom_line(data= KI_12, aes(x= weight, y= value*100),colour="#88AEDF") +
+  geom_line(data= KI_13, aes(x= weight, y= value*100),colour="#A5A6E2") +
+  geom_line(data= KI_14, aes(x= weight, y= value*100),colour="#BD9EDF") +
+  geom_line(data= KI_15, aes(x= weight, y= value*100),colour="#D098D7") +
+  geom_line(data= KI_16, aes(x= weight, y= value*100),colour="#DD94C9") +
+  geom_line(data= KI_17, aes(x= weight, y= value*100),colour="#E393B8", linetype="dashed") +
+scale_x_log10(breaks=c(1e-6,1e-5,1e-4,1e-3,1e-2,1e-1,1e0,1e1,1e2,1e3,1e4,1e5,1e6)) + labs(y=" % Change in abundance", x="Size (log(weight)") + theme_bw()
+
+plota
+  
+library(colorspace)
+col <- rainbow_hcl(19)
+
+#values= c("#D79F7D", "#CAA66E", "#B9AC65", "#A5B266", "#8FB770", "#75BB80", "#5ABD94", "#41BEA7", "#38BDBA", "#49BACA", "#68B5D7", "#88AEDF", "#A5A6E2", "#BD9EDF", "#D098D7", "#DD94C9", "#E393B8"))
+
+```
+Same as above but for LI: be careful, cause using same notation
+
+```{r}
+
+
+df_n_1 <- filter(df_n, sp== "P.bolini")
+df_Base_1 <- filter(df_n_1, name== "Base")
+df_LI_1 <- dplyr::filter(df_n_1, name== "LI")
+weights_1 <- df_LI_1[,3] #weights for all
+LI_1 <- as.data.frame((df_LI_1$value/df_Base_1$value)-1) #relative value
+LI_1 <- cbind(weights_1, LI_1)
+colnames(LI_1) <- c("weight","value")
+
+df_n_2 <- filter(df_n, sp== "K.anderssoni")
+df_Base_2 <- filter(df_n_2, name== "Base")
+df_LI_2 <- dplyr::filter(df_n_2, name== "LI")
+LI_2 <- as.data.frame((df_LI_2$value/df_Base_2$value)-1) #relative value
+LI_2 <- cbind(weights_1, LI_2)
+colnames(LI_2) <- c("weight","value")
+
+df_n_3 <- filter(df_n, sp== "C.microdon")
+df_Base_3 <- filter(df_n_3, name== "Base")
+df_LI_3 <- dplyr::filter(df_n_3, name== "LI")
+LI_3 <- as.data.frame((df_LI_3$value/df_Base_3$value)-1) #relative value
+LI_3 <- cbind(weights_1, LI_3)
+colnames(LI_3) <- c("weight","value")
+
+df_n_4 <- filter(df_n, sp== "G.fraseri")
+df_Base_4 <- filter(df_n_4, name== "Base")
+df_LI_4 <- dplyr::filter(df_n_4, name== "LI")
+LI_4 <- as.data.frame((df_LI_4$value/df_Base_4$value)-1) 
+LI_4 <- cbind(weights_1, LI_4)
+colnames(LI_4) <- c("weight","value")
+
+df_n_5 <- filter(df_n, sp== "E.carlsbergi")
+df_Base_5 <- filter(df_n_5, name== "Base")
+df_LI_5 <- dplyr::filter(df_n_5, name== "LI")
+LI_5 <- as.data.frame((df_LI_5$value/df_Base_5$value)-1) 
+LI_5 <- cbind(weights_1, LI_5)
+colnames(LI_5) <- c("weight","value")
+
+df_n_6 <- filter(df_n, sp== "G.braueri")
+df_Base_6 <- filter(df_n_6, name== "Base")
+df_LI_6 <- dplyr::filter(df_n_6, name== "LI")
+LI_6 <- as.data.frame((df_LI_6$value/df_Base_6$value)-1) 
+LI_6 <- cbind(weights_1, LI_6)
+colnames(LI_6) <- c("weight","value")
+
+df_n_7 <- filter(df_n, sp== "E.antarctica")
+df_Base_7 <- filter(df_n_7, name== "Base")
+df_LI_7 <- dplyr::filter(df_n_7, name== "LI")
+LI_7 <- as.data.frame((df_LI_7$value/df_Base_7$value)-1) 
+LI_7 <- cbind(weights_1, LI_7)
+colnames(LI_7) <- c("weight","value")
+
+df_n_8 <- filter(df_n, sp== "B.antarcticus")
+df_Base_8 <- filter(df_n_8, name== "Base")
+df_LI_8 <- dplyr::filter(df_n_8, name== "LI")
+LI_8 <- as.data.frame((df_LI_8$value/df_Base_8$value)-1) 
+LI_8 <- cbind(weights_1, LI_8)
+colnames(LI_8) <- c("weight","value")
+
+df_n_9 <- filter(df_n, sp== "N.achirus")
+df_Base_9 <- filter(df_n_9, name== "Base")
+df_LI_9 <- dplyr::filter(df_n_9, name== "LI")
+LI_9 <- as.data.frame((df_LI_9$value/df_Base_9$value)-1) 
+LI_9 <- cbind(weights_1, LI_9)
+colnames(LI_9) <- c("weight","value")
+
+df_n_10 <- filter(df_n, sp== "G.nicholsi")
+df_Base_10 <- filter(df_n_10, name== "Base")
+df_LI_10 <- dplyr::filter(df_n_10, name== "LI")
+LI_10 <- as.data.frame((df_LI_10$value/df_Base_10$value)-1) 
+LI_10 <- cbind(weights_1, LI_10)
+colnames(LI_10) <- c("weight","value")
+
+df_n_11 <- filter(df_n, sp== "P.antarcticum")
+df_Base_11 <- filter(df_n_11, name== "Base")
+df_LI_11 <- dplyr::filter(df_n_11, name== "LI")
+LI_11 <- as.data.frame((df_LI_11$value/df_Base_11$value)-1) 
+LI_11 <- cbind(weights_1, LI_11)
+colnames(LI_11) <- c("weight","value")
+
+df_n_12 <- filter(df_n, sp== "N.coatsi")
+df_Base_12 <- filter(df_n_12, name== "Base")
+df_LI_12 <- dplyr::filter(df_n_12, name== "LI")
+LI_12 <- as.data.frame((df_LI_12$value/df_Base_12$value)-1) 
+LI_12 <- cbind(weights_1, LI_12)
+colnames(LI_12) <- c("weight","value")
+
+df_n_13 <- filter(df_n, sp== "C.piriei")
+df_Base_13 <- filter(df_n_13, name== "Base")
+df_LI_13 <- dplyr::filter(df_n_13, name== "LI")
+LI_13 <- as.data.frame((df_LI_13$value/df_Base_13$value)-1) 
+LI_13 <- cbind(weights_1, LI_13)
+colnames(LI_13) <- c("weight","value")
+
+df_n_14 <- filter(df_n, sp== "P.gracilis")
+df_Base_14 <- filter(df_n_14, name== "Base")
+df_LI_14 <- dplyr::filter(df_n_14, name== "LI")
+LI_14 <- as.data.frame((df_LI_14$value/df_Base_14$value)-1) 
+LI_14 <- cbind(weights_1, LI_14)
+colnames(LI_14) <- c("weight","value")
+
+df_n_15 <- filter(df_n, sp== "C.gunnari")
+df_Base_15 <- filter(df_n_15, name== "Base")
+df_LI_15 <- dplyr::filter(df_n_15, name== "LI")
+LI_15 <- as.data.frame((df_LI_15$value/df_Base_15$value)-1) 
+LI_15 <- cbind(weights_1, LI_15)
+colnames(LI_15) <- c("weight","value")
+
+df_n_16 <- filter(df_n, sp== "D.eleginoides")
+df_Base_16 <- filter(df_n_16, name== "Base")
+df_LI_16 <- dplyr::filter(df_n_16, name== "LI")
+LI_16 <- as.data.frame((df_LI_16$value/df_Base_16$value)-1) 
+LI_16 <- cbind(weights_1, LI_16)
+colnames(LI_16) <- c("weight","value")
+
+df_n_17 <- filter(df_n, sp== "D.mawsoni")
+df_Base_17 <- filter(df_n_17, name== "Base")
+df_LI_17 <- dplyr::filter(df_n_17, name== "LI")
+LI_17 <- as.data.frame((df_LI_17$value/df_Base_17$value)-1) 
+LI_17 <- cbind(weights_1, LI_17)
+colnames(LI_17) <- c("weight","value")
+
+library(ggplot2)
+
+plotb <- LI_1 %>% ggplot(mapping=aes(x= weight, y= value*100)) + geom_line(colour= "#D79F7D") +
+  geom_line(data= LI_2, aes(x= weight, y= value*100), colour="#CAA66E") +
+  geom_line(data= LI_3, aes(x= weight, y= value*100), colour= "#B9AC65") +
+  geom_line(data= LI_4, aes(x= weight, y= value*100),colour= "#A5B266" ) +
+  geom_line(data= LI_5, aes(x= weight, y= value*100),colour= "#8FB770") +
+  geom_line(data= LI_6, aes(x= weight, y= value*100), colour= "#75BB80") +
+  geom_line(data= LI_7, aes(x= weight, y= value*100), colour="#5ABD94") +
+  geom_line(data= LI_8, aes(x= weight, y= value*100), colour="#41BEA7") +
+  geom_line(data= LI_9, aes(x= weight, y= value*100), colour= "#38BDBA") +
+  geom_line(data= LI_10, aes(x= weight, y= value*100),colour= "#49BACA") +
+  geom_line(data= LI_11, aes(x= weight, y= value*100),colour="#68B5D7") +
+  geom_line(data= LI_12, aes(x= weight, y= value*100),colour="#88AEDF") +
+  geom_line(data= LI_13, aes(x= weight, y= value*100),colour="#A5A6E2") +
+  geom_line(data= LI_14, aes(x= weight, y= value*100),colour="#BD9EDF") +
+  geom_line(data= LI_15, aes(x= weight, y= value*100),colour="#D098D7") +
+  geom_line(data= LI_16, aes(x= weight, y= value*100),colour="#DD94C9") +
+  geom_line(data= LI_17, aes(x= weight, y= value*100),colour="#E393B8", linetype="dashed") +
+scale_x_log10(breaks=c(1e-6,1e-5,1e-4,1e-3,1e-2,1e-1,1e0,1e1,1e2,1e3,1e4,1e5,1e6)) + labs(y=" % Change in abundance", x="Size (log(weight)") + theme_bw()
+
+plotb
+
+library(colorspace)
+col <- rainbow_hcl(19)
+
+
+```
+KILI multispecies
+
+```{r}
+
+df_n_1 <- filter(df_n, sp== "P.bolini")
+df_Base_1 <- filter(df_n_1, name== "Base")
+df_KILI_1 <- dplyr::filter(df_n_1, name== "KI_LI")
+weights_1 <- df_KILI_1[,3] #weights for all
+KILI_1 <- as.data.frame((df_KILI_1$value/df_Base_1$value)-1) #relative value
+KILI_1 <- cbind(weights_1, KILI_1)
+colnames(KILI_1) <- c("weight","value")
+
+df_n_2 <- filter(df_n, sp== "K.anderssoni")
+df_Base_2 <- filter(df_n_2, name== "Base")
+df_KILI_2 <- dplyr::filter(df_n_2, name== "KI_LI")
+KILI_2 <- as.data.frame((df_KILI_2$value/df_Base_2$value)-1) #relative value
+KILI_2 <- cbind(weights_1, KILI_2)
+colnames(KILI_2) <- c("weight","value")
+
+df_n_3 <- filter(df_n, sp== "C.microdon")
+df_Base_3 <- filter(df_n_3, name== "Base")
+df_KILI_3 <- dplyr::filter(df_n_3, name== "KI_LI")
+KILI_3 <- as.data.frame((df_KILI_3$value/df_Base_3$value)-1) #relative value
+KILI_3 <- cbind(weights_1, KILI_3)
+colnames(KILI_3) <- c("weight","value")
+
+df_n_4 <- filter(df_n, sp== "G.fraseri")
+df_Base_4 <- filter(df_n_4, name== "Base")
+df_KILI_4 <- dplyr::filter(df_n_4, name== "KI_LI")
+KILI_4 <- as.data.frame((df_KILI_4$value/df_Base_4$value)-1) 
+KILI_4 <- cbind(weights_1, KILI_4)
+colnames(KILI_4) <- c("weight","value")
+
+df_n_5 <- filter(df_n, sp== "E.carlsbergi")
+df_Base_5 <- filter(df_n_5, name== "Base")
+df_KILI_5 <- dplyr::filter(df_n_5, name== "KI_LI")
+KILI_5 <- as.data.frame((df_KILI_5$value/df_Base_5$value)-1) 
+KILI_5 <- cbind(weights_1, KILI_5)
+colnames(KILI_5) <- c("weight","value")
+
+df_n_6 <- filter(df_n, sp== "G.braueri")
+df_Base_6 <- filter(df_n_6, name== "Base")
+df_KILI_6 <- dplyr::filter(df_n_6, name== "KI_LI")
+KILI_6 <- as.data.frame((df_KILI_6$value/df_Base_6$value)-1) 
+KILI_6 <- cbind(weights_1, KILI_6)
+colnames(KILI_6) <- c("weight","value")
+
+df_n_7 <- filter(df_n, sp== "E.antarctica")
+df_Base_7 <- filter(df_n_7, name== "Base")
+df_KILI_7 <- dplyr::filter(df_n_7, name== "KI_LI")
+KILI_7 <- as.data.frame((df_KILI_7$value/df_Base_7$value)-1) 
+KILI_7 <- cbind(weights_1, KILI_7)
+colnames(KILI_7) <- c("weight","value")
+
+df_n_8 <- filter(df_n, sp== "B.antarcticus")
+df_Base_8 <- filter(df_n_8, name== "Base")
+df_KILI_8 <- dplyr::filter(df_n_8, name== "KI_LI")
+KILI_8 <- as.data.frame((df_KILI_8$value/df_Base_8$value)-1) 
+KILI_8 <- cbind(weights_1, KILI_8)
+colnames(KILI_8) <- c("weight","value")
+
+df_n_9 <- filter(df_n, sp== "N.achirus")
+df_Base_9 <- filter(df_n_9, name== "Base")
+df_KILI_9 <- dplyr::filter(df_n_9, name== "KI_LI")
+KILI_9 <- as.data.frame((df_KILI_9$value/df_Base_9$value)-1) 
+KILI_9 <- cbind(weights_1, KILI_9)
+colnames(KILI_9) <- c("weight","value")
+
+df_n_10 <- filter(df_n, sp== "G.nicholsi")
+df_Base_10 <- filter(df_n_10, name== "Base")
+df_KILI_10 <- dplyr::filter(df_n_10, name== "KI_LI")
+KILI_10 <- as.data.frame((df_KILI_10$value/df_Base_10$value)-1) 
+KILI_10 <- cbind(weights_1, KILI_10)
+colnames(KILI_10) <- c("weight","value")
+
+df_n_11 <- filter(df_n, sp== "P.antarcticum")
+df_Base_11 <- filter(df_n_11, name== "Base")
+df_KILI_11 <- dplyr::filter(df_n_11, name== "KI_LI")
+KILI_11 <- as.data.frame((df_KILI_11$value/df_Base_11$value)-1) 
+KILI_11 <- cbind(weights_1, KILI_11)
+colnames(KILI_11) <- c("weight","value")
+
+df_n_12 <- filter(df_n, sp== "N.coatsi")
+df_Base_12 <- filter(df_n_12, name== "Base")
+df_KILI_12 <- dplyr::filter(df_n_12, name== "KI_LI")
+KILI_12 <- as.data.frame((df_KILI_12$value/df_Base_12$value)-1) 
+KILI_12 <- cbind(weights_1, KILI_12)
+colnames(KILI_12) <- c("weight","value")
+
+df_n_13 <- filter(df_n, sp== "C.piriei")
+df_Base_13 <- filter(df_n_13, name== "Base")
+df_KILI_13 <- dplyr::filter(df_n_13, name== "KI_LI")
+KILI_13 <- as.data.frame((df_KILI_13$value/df_Base_13$value)-1) 
+KILI_13 <- cbind(weights_1, KILI_13)
+colnames(KILI_13) <- c("weight","value")
+
+df_n_14 <- filter(df_n, sp== "P.gracilis")
+df_Base_14 <- filter(df_n_14, name== "Base")
+df_KILI_14 <- dplyr::filter(df_n_14, name== "KI_LI")
+KILI_14 <- as.data.frame((df_KILI_14$value/df_Base_14$value)-1) 
+KILI_14 <- cbind(weights_1, KILI_14)
+colnames(KILI_14) <- c("weight","value")
+
+df_n_15 <- filter(df_n, sp== "C.gunnari")
+df_Base_15 <- filter(df_n_15, name== "Base")
+df_KILI_15 <- dplyr::filter(df_n_15, name== "KI_LI")
+KILI_15 <- as.data.frame((df_KILI_15$value/df_Base_15$value)-1) 
+KILI_15 <- cbind(weights_1, KILI_15)
+colnames(KILI_15) <- c("weight","value")
+
+df_n_16 <- filter(df_n, sp== "D.eleginoides")
+df_Base_16 <- filter(df_n_16, name== "Base")
+df_KILI_16 <- dplyr::filter(df_n_16, name== "KI_LI")
+KILI_16 <- as.data.frame((df_KILI_16$value/df_Base_16$value)-1) 
+KILI_16 <- cbind(weights_1, KILI_16)
+colnames(KILI_16) <- c("weight","value")
+
+df_n_17 <- filter(df_n, sp== "D.mawsoni")
+df_Base_17 <- filter(df_n_17, name== "Base")
+df_KILI_17 <- dplyr::filter(df_n_17, name== "KI_LI")
+KILI_17 <- as.data.frame((df_KILI_17$value/df_Base_17$value)-1) 
+KILI_17 <- cbind(weights_1, KILI_17)
+colnames(KILI_17) <- c("weight","value")
+
+library(ggplot2)
+
+plotc <- KILI_1 %>% ggplot(mapping=aes(x= weight, y= value*100)) + geom_line(colour= "#D79F7D") +
+  geom_line(data= KILI_2, aes(x= weight, y= value*100), colour="#CAA66E") +
+  geom_line(data= KILI_3, aes(x= weight, y= value*100), colour= "#B9AC65") +
+  geom_line(data= KILI_4, aes(x= weight, y= value*100),colour= "#A5B266" ) +
+  geom_line(data= KILI_5, aes(x= weight, y= value*100),colour= "#8FB770") +
+  geom_line(data= KILI_6, aes(x= weight, y= value*100), colour= "#75BB80") +
+  geom_line(data= KILI_7, aes(x= weight, y= value*100), colour="#5ABD94") +
+  geom_line(data= KILI_8, aes(x= weight, y= value*100), colour="#41BEA7") +
+  geom_line(data= KILI_9, aes(x= weight, y= value*100), colour= "#38BDBA") +
+  geom_line(data= KILI_10, aes(x= weight, y= value*100),colour= "#49BACA") +
+  geom_line(data= KILI_11, aes(x= weight, y= value*100),colour="#68B5D7") +
+  geom_line(data= KILI_12, aes(x= weight, y= value*100),colour="#88AEDF") +
+  geom_line(data= KILI_13, aes(x= weight, y= value*100),colour="#A5A6E2") +
+  geom_line(data= KILI_14, aes(x= weight, y= value*100),colour="#BD9EDF") +
+  geom_line(data= KILI_15, aes(x= weight, y= value*100),colour="#D098D7") +
+  geom_line(data= KILI_16, aes(x= weight, y= value*100),colour="#DD94C9") +
+  geom_line(data= KILI_17, aes(x= weight, y= value*100),colour="#E393B8",linetype= "dashed") +
+scale_x_log10(breaks=c(1e-6,1e-5,1e-4,1e-3,1e-2,1e-1,1e0,1e1,1e2,1e3,1e4,1e5,1e6)) + labs(y=" % Change in abundance", x="Size (log(weight)") + theme_bw()
+
+plotc
+
+library(colorspace)
+col <- rainbow_hcl(19)
+```
+
+
+add three plots from above together
+```{r}
+library(ggplot2)
+library(ggpubr)
+
+plota <- plota + scale_y_continuous(limits = c(-3,+8)) 
+plotb <- plotb + scale_y_continuous(limits = c(-3,+8))
+plotc <- plotc + scale_y_continuous(limits = c(-3,+8))
+
+ggarrange(plota, plotb, plotc, ncol= 1)
+```
+
+
+BIOMASS of resource for each scenario (same as above but with n_pp) & abundance spectrum
+```{r}
+
+#Total abundance of n_pp accross scenarios?
+df_biomass_npp <- df_plot_npp %>% 
+  group_by(name) %>% 
+  mutate(biomass = n_pp * weights_scenarios) %>% 
+  ungroup()
+
+df_summary_biomass_npp <- df_biomass_npp %>%
+  group_by(name) %>%
+  dplyr::summarise(total_biomass = sum(biomass)) %>%
+  ungroup()
+
+#Now do plot as above for abundance not biomass
+df_npp <- df_plot_npp
+
+df_Base_p <- dplyr::filter(df_npp, name== "Base")
+df_KD_p <- dplyr::filter(df_n_pp, name== "KD")
+df_KI_p <- dplyr::filter(df_npp, name== "KI")
+df_LD_p <- dplyr::filter(df_npp, name== "LD")
+df_LI_p <- dplyr::filter(df_npp, name== "LI")
+df_KILI_p <- dplyr::filter(df_npp, name== "KI_LI")
+df_KDLD_p <- dplyr::filter(df_npp, name== "KD_LD")
+df_KILD_p <- dplyr::filter(df_npp, name== "KI_LD")
+df_KDLI_p <- dplyr::filter(df_npp, name== "KD_LI")
+
+#relative values
+Base_p <- as.data.frame((df_Base_p$n_pp/df_Base_p$n_pp)-1)
+KD_p <- as.data.frame((df_KD_p$n_pp/df_Base_p$n_pp)-1)
+KI_p <- as.data.frame((df_KI_p$n_pp/df_Base_p$n_pp)-1)
+LD_p <- as.data.frame((df_LD_p$n_pp/df_Base_p$n_pp)-1)
+LI_p <- as.data.frame((df_LI_p$n_pp/df_Base_p$n_pp)-1)
+KILI_p <- as.data.frame((df_KILI_p$n_pp/df_Base_p$n_pp)-1)
+KDLD_p <- as.data.frame((df_KDLD_p$n_pp/df_Base_p$n_pp)-1)
+KILD_p <- as.data.frame((df_KILD_p$n_pp/df_Base_p$n_pp)-1)
+KDLI_p <- as.data.frame((df_KDLI_p$n_pp/df_Base_p$n_pp)-1)
+
+df_all_relative_p <- cbind(Base_p, KD_p, KI_p ,LD_p ,LI_p , KILI_p,
+                         KDLD_p, KILD_p, KDLI_p)
+colnames(df_all_relative_p) <- c("Base", "KD", "KI" ,"LD" ,"LI" , "KILI",
+                         "KDLD", "KILD", "KDLI")
+df_all_relative_p <- reshape::melt(df_all_relative_p)
+df_all_relative_p <- cbind(weights_scenarios, df_all_relative_p)
+
+df_all_relative_p <- na.omit(df_all_relative_p)
+
+df_tidy_p <- df_all_relative_p %>% 
+  dplyr::mutate(Param_Type = case_when(variable == "KI" ~ "kappa",
+                                       variable == "KD" ~ "kappa",
+                                       variable == "LI" ~ "lambda",
+                                       variable == "LD" ~ "lambda",
+                                       variable == "KILI" ~ "interaction",
+                                       variable == "KILD" ~ "interaction",
+                                       variable == "KDLI" ~ "interaction",
+                                       variable == "KDLD" ~ "interaction")) %>% 
+  filter(!variable=="Base") %>% 
+  mutate(param = fct_relevel(Param_Type, "kappa", "lambda", "interaction"))
+
+df_tidy_p$variable <- factor(as.factor(df_tidy_p$variable),levels = c("KILI", "KI","LI","KILD","Base","KDLI", "LD","KD","KDLD"))
+
+plot <- ggplot(df_tidy_p, aes(x= weights_scenarios, y= value*100, colour= variable)) + geom_line() + scale_x_log10() + labs(y=" % Change in plankton abundance", x="Size (log(weight)") + scale_color_manual(values=c("#B35806", "#E08214", "#FDB863", "#FEE0B6" ,"#D8DAEB", "#B2ABD2", "#8073AC", "#542788")) + theme_bw() + facet_grid(rows= "param")
+
+plot + theme(strip.background = element_rect(fill= "white")) 
+
+
+```
+
+Adding fish abundance change and plankton abundance change
+```{r}
+##add both plots together? 
+df_p <- df_tidy_p
+df_p <- rename(df_p, w = weights_scenarios)
+df_s <- df_tidy
+df_s_I <- filter(df_s, variable== "KI" | variable== "LI"| variable == "KILI")
+
+plot <- df_s %>% filter(variable== "KI" | variable== "LI"| variable == "KILI") %>% 
+  ggplot(mapping= aes(x= w, y= value*100, colour= variable)) + 
+  geom_line()+
+  # geom_line(data= df_s_I,aes(x= w, y= value*100, colour= variable)) +
+  scale_x_log10(breaks=c(1e-6,1e-5,1e-4,1e-3,1e-2,1e-1,1e0,1e1,1e2,1e3,1e4,1e5,1e6)) + labs(y=" % Change in abundance", x="Size (log(weight)") + theme_bw() + facet_grid(rows= "param") + scale_color_manual(values=c("#B35806", "#E08214", "#FDB863","#B35806", "#E08214", "#FDB863","#B35806", "#E08214"))
+# +scale_y_continuous(limits = c(-2,+10))
+  
+# + scale_color_manual(values=c("#B35806", "#E08214", "#FDB863", "#FEE0B6" ,"#D8DAEB", "#B2ABD2", "#8073AC", "#542788"))
+
+plot
+
+#looking for y intercept (where it changes from - to + in graph)
+#species plots
+df_sp_KI <- filter(df_s, variable== "KI")
+df_sp_KI$value <- df_sp_KI$value*100 #around 0.07?
+
+df_sp_LI <- filter(df_s, variable== "LI")
+df_sp_LI$value <- df_sp_LI$value*100 # around 0.2
+
+df_sp_KILI <- filter(df_s, variable== "KILI")
+df_sp_KILI$value <- df_sp_KILI$value*100 #around 0.1
+
+#plankton plot (only LI intercepts)
+df_p_LI <- filter(df_p, variable== "LI")
+df_p_LI$value <- df_p_LI$value*100
+```
+
+
+ignore First plot biomass stuff
+```{r}
+#kappa exps: +-5%
+df_plot %>%
+  filter(time == max_t) %>% # only use the final year
+  filter(lambda==2.05) %>%
+```
+
+ignore
+```{r}
+ggplot(aes(x=value, y =sp, colour = name))+
+  geom_point() +
+  # facet_wrap(~name) + # separate plot for each scenario
+  scale_x_log10()
+#lambda exps: +-1/2%
+df_plot %>%
+  filter(time == max_t) %>% # only use the final year
+  filter(kappa==0.256) %>%    
+  ggplot(aes(x=value, y =sp, colour = name))+
+  geom_point() +
+  # facet_wrap(~name) + # separate plot for each scenario
+  scale_x_log10()
+
+#both
+df_plot %>%
+  filter(time == max_t) %>% # only use the final year
+  ggplot(aes(x=value, y =sp, colour = name))+
+  geom_point() +
+  # facet_wrap(~name) + # separate plot for each scenario
+  scale_x_log10()
+
+```
+
+
+ignore: Get relative change in excel!
+```{r}
+# df_max <- df_plot
+# df_max <- filter(df_max, time== max_t)
+# fwrite(df_max, "experiments_unedited_b.csv")
+```
+
+
+Ignore (boimass plot- use kierans code)
+```{r}
+#bring in edited experiments folder
+df_bioplot <- read.csv("experiments_ED_B.csv")
+
+df_tidy <- df_bioplot %>% 
+  dplyr::mutate(Param_Type = case_when(name == "KI" ~ "kappa",
+                                       name == "KD" ~ "kappa",
+                                       name == "LI" ~ "lambda",
+                                       name == "LD" ~ "lambda",
+                                       name == "KI_LI" ~ "interaction",
+                                       name == "KI_LD" ~ "interaction",
+                                       name == "KD_LI" ~ "interaction",
+                                       name == "KD_LD" ~ "interaction")) %>% 
+  filter(!name=="Base")
+
+#reorder by species w_inf
+sp_params <- sim_loop4@params@species_params
+ordered_sp <- sp_params[order(sp_params$w_inf),]
+df_bioplot$sp <- factor(df_bioplot$sp, levels = ordered_sp$species)
+
+df_tidy$name <- as.factor(df_tidy$name)
+
+df_plot <- df_tidy %>%
+  group_by(name) %>%
+  mutate(total_change = sum(biomass_change)) %>%
+  ungroup()
+df_plot_v2 <- df_plot %>%
+  mutate(name_reordered = fct_reorder(name, total_change)) %>%
+  mutate(name_v2 = fct_relevel(name_reordered, "KI_LI","KI","LI","KI_LD","Base","KD_LI","LD","KD","KD_LD"))
+
+df_plot_KM <- df_plot %>%
+  mutate(name_reordered = fct_reorder(name, total_change)) %>%
+  mutate(name_v2 = fct_relevel(name_reordered, "KI_LI","KI","LI","KI_LD","KD_LI","LD","KD","KD_LD"))
+
+ df_Decrease <- df_plot_KM %>%
+   filter(name_reordered == "KD" | name_reordered == "LD" | name_reordered == "KD_LI" |name_reordered == "KD_LD")
+ 
+ df_plot_KM %>% 
+    ggplot(mapping = aes(x=sp, y=biomass_change, fill= name_v2)) +
+    geom_bar(stat="identity") +
+    geom_bar(data = df_Decrease, aes(x=sp, y=biomass_change, fill=name_reordered), stat="identity")+
+    scale_fill_brewer(palette = "PuOr") +
+   facet_wrap(~Param_Type)+
+    theme_classic() 
+ 
+ df_plot_v2 %>% 
+    ggplot(mapping = aes(x=sp, y=biomass_change, fill= name_v2)) +
+    geom_bar(stat="identity") +
+    geom_bar(data = df_Decrease, aes(x=sp, y=biomass_change, fill=name_reordered), stat="identity")+
+    scale_fill_brewer(palette = "PuOr") +
+    theme_classic() 
+
+ #make plots separate 
+df_plot_v3 <- df_plot_v2
+ df_Kappa <- df_plot_v3 %>%
+   filter(name == "KI" | name == "KD" | name == "Base")
+ df_Lambda <- df_plot_v3 %>% 
+   filter(name == "LI" |  name == "Base" | name== "LD")
+ df_Interaction <- df_plot_v3 %>% 
+   filter(name == "KI_LI" | name == "KI_LD" | name == "Base" | name == "KD_LI" |name == "KD_LD")
+#Kappa plot
+df_plot_K <- df_Kappa
+df_plot_K %>% 
+    ggplot(mapping = aes(x=sp, y=biomass_change, fill=name_reordered)) +  geom_bar(stat="identity") +
+    scale_fill_brewer(palette = "PuOr") +
+  coord_cartesian(ylim= c(-0.10, 0.10))+
+    theme_classic() +
+labs(title = "Kappa Exps Biomass Change", y="Relative Biomass Change", x="Species")
+#Lambda plot
+df_plot_L <- df_Lambda
+df_plot_L %>% 
+    ggplot(mapping = aes(x=sp, y=biomass_change, fill=name_reordered)) +  geom_bar(stat="identity") +
+    scale_fill_brewer(palette = "PuOr") +
+    theme_classic() +
+  coord_cartesian(ylim= c(-0.10, 0.10))+
+  labs(title = "Lambda Exps Biomass Change", y="Relative Biomass Change", x="Species")
+#Interaction plot
+df_Decrease_I <- df_Interaction %>%
+   filter(name_reordered == "KD_LI" | name_reordered == "KD_LD")
+df_plot_I <- df_Interaction
+df_plot_I %>% 
+    ggplot(mapping = aes(x=sp, y=biomass_change, fill=name_v2)) +  geom_bar(stat="identity") +
+  geom_bar(data = df_Decrease_I, aes(x=sp, y=biomass_change, fill=name_reordered), stat="identity")+
+    scale_fill_brewer(palette = "PuOr") +
+    theme_classic() +
+  coord_cartesian(ylim= c(-0.10, 0.10))+
+labs(title = "Interaction Exps Biomass Change", y="Relative Biomass Change", x="Species")
+
+#get same scale
+
+
+```
+

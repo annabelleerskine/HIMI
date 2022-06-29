@@ -1,0 +1,834 @@
+---
+title: toothfish project
+author: RF
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r}
+library(tidyverse)
+library(mizer)
+library(mizerExperimental)
+library(mizerHowTo)
+```
+
+
+```{r}
+#' A function that plots the predicted abundance versus observed abundance.
+#'
+#' @param sim An object if class MizerSim
+#' @param dat A dataframe containing the observed yield values
+#' @param returnData A boolean value that determines whether to return the plot
+#' or the data itself. Default is FALSE
+#'
+#' @export
+plotPredObsAbun <-function(sim, dat, returnData = FALSE){
+  ## check obs vs. predicted yield
+  plot_dat <- melt(getBiomass(sim)[dim(sim@n)[1],])
+  plot_dat$obs <- log10(dat)
+  plot_dat$value <- log10(plot_dat$value)
+  plot_dat$Species <-row.names(plot_dat)
+  
+  w_inf <- log10(sim@params@species_params$w_inf)
+  names(w_inf) <- sim@params@species_params$species
+  
+  # window size
+  winLim <- c(min(plot_dat$obs,plot_dat$value), max(plot_dat$obs,plot_dat$value))
+  # winLim <- c(0,max(plot_dat$obs,plot_dat$value)) # abline doesn't show anymore 18/06/2021
+  p <- ggplot(plot_dat) + # plot predicted and observed yields
+    geom_point(aes(x = value, y = obs, color = Species, size = Species)) +
+    ggrepel::geom_text_repel(aes(x = value, y = obs, label = Species), hjust = 0, nudge_x = 0.05)+
+    scale_size_manual(values = w_inf) +
+    scale_color_manual(values = sim@params@linecolour) +
+    geom_abline(color = "black", slope = 1, intercept = 0, linetype = "dashed", alpha = .5) +
+    scale_x_continuous(name = "log10 Predicted Abundance", limits = winLim) +
+    scale_y_continuous(name = "log10 Observed Abundance", limits = winLim) +
+    theme(legend.position = "none", legend.key = element_rect(fill = "white"),
+          panel.background = element_blank(), panel.grid.minor = element_line(color = "gray"))
+  
+  if(returnData) return(plot_dat) else return(p)
+}
+```
+
+
+
+
+I need to make a mizer model out of a bunch of data
+
+# The data I have:
+
+
+Email from Nicole attached to the data:
+Hi Romain, Julia,
+
+I’ve calculated the raw total catch and effort each year for input into the size spectrum models.
+
+For the RSTS data the effort is the area swept ( km2) by trawls and biomass of the shortlist of species is in kg. The data are not collected at the same time each year, some years have a March- May sampling and others have a Jul-Sep sampling
+
+For the longline data, I only have toothfish information. Effort is number of hooks and biomass is in T.
+
+It is important to note that in the longline dataset there are lots of things going on such as shifting spatial distribution of effort through time, different boats coming in and out of the fishery, different depths fished etc etc so raw catch/cpue may not be wholly representative.
+
+ 
+
+For the overlap of species in the RSTS data, I have calculated to proportion of all hauls where species co-occur.
+
+I had a look at the Kempf ref in your paper Julia, but it wasn’t entirely clear to me how the proportions were worked out for each species.
+
+Happy to discuss and calculate this as well.
+
+ 
+
+Code attached as well as RData file. Hopefully these are relatively self-explanatory 😊
+
+
+
+```{r}
+load("size_spec_inputs.RData")
+```
+
+This loads 3 var: ll_trends, rsts_m1_coocur, rsts_trends
+
+
+ll_trends is the longline fisheries fishing only toothfish
+```{r}
+# view(ll_trends)
+
+plot_dat <- reshape2::melt(ll_trends, "Year")
+
+ggplot(plot_dat, aes(x = Year, y = value)) +
+  geom_point() +
+  facet_wrap(~variable, nrow = 2, scales = "free")
+
+```
+
+The co-occurence of sites from the survey, can use as interaction matrix
+
+```{r}
+view(rsts_m1_cooccur)
+
+
+```
+
+
+
+Biomass of species per year from trawls
+
+```{r}
+
+view(rsts_trends)
+
+plot_dat <- rsts_trends[,-2]
+plot_dat <- reshape2::melt(plot_dat, "Year")
+plot_dat$Year <- as.numeric(plot_dat$Year)
+
+ggplot(plot_dat) +
+  geom_line(aes(x = Year, y = value, color = variable)) +
+  scale_y_continuous(trans = "log10")
+
+```
+
+
+
+# Creating the species_params df
+
+Need w_inf for that
+
+## Summary of species
+
+### Dissostichus eleginoides
+
+https://www.fishbase.se/summary/Dissostichus-eleginoides.html
+
+Maturity: Lm 49.0, range 38 - 60 cm
+
+Max length : 215 cm TL male/unsexed
+
+common length : 70.0 cm TL male/unsexed
+
+max. published weight: 9.6 kg  (finding 140 kg using a and b, wtf; need to lower it down manually otherwise toothfish eats everything in the ecosystem). Inputing a lmax of 105 cm instead to get an winf of 14.6 kg
+
+max. reported age: 31 years 
+
+a=0.00631
+
+b=3.15
+
+Biology: At 12-15 cm TL, semi-pelagic juveniles become demersal at 150-400 m depth. Adults migrate to deeper habitats at depths greater than 1,000 m. Utilized as food fish.
+
+### Champsocephalus gunnari
+
+https://www.fishbase.se/summary/Champsocephalus-gunnari.html
+
+Maturity: Lm 26.0, range 21 - 32 cm
+
+Max length : 66.0 cm TL male/unsexed
+
+common length : 35.0 cm TL male/unsexed
+
+a=0.00120
+
+b=3.47
+
+max. published weight: 2.0 kg (finding 2.47 kg using a and b coeficients)
+
+Biology: Feed mainly on krill and mysids. Spawn in autumn and winter. Synchronous spawner. Larval pelagic phase is long. Utilized as a food fish.
+
+### Channichthys rhinoceratus
+
+https://www.fishbase.se/summary/Channichthys-rhinoceratus.html
+
+Maturity: Lm ?  range ? - ? cm
+
+Max length : 60.0 cm TL male/unsexed
+
+common length : 40.0 cm TL male/unsexed
+
+max. published weight: 500.00 g (finding 1.8 kg with a and b)
+
+a=0.00129
+
+b=3.46
+
+K = 0.3
+
+Biology: Adults are found from near shore to farther than 750 m. Feed mainly on fishes and occasionally on algae.
+
+### Lepidonotothen squamifrons
+
+https://www.fishbase.se/summary/Lepidonotothen-squamifrons.html
+
+Maturity: Lm 27.3, range 19 - 36 cm
+
+Max length : 55.0 cm TL male/unsexed
+
+common length : 35.0 cm TL male/unsexed
+
+max. reported age: 19 years
+
+a=0.00468
+
+b=3.24
+
+Feeds chiefly on macrozooplankton (mainly crustaceans, cnidarians and salps) and midwater fishes.
+
+### Macrourus
+
+Only have the genus, don't know about the species, only that there are 2.
+
+The two most probable are whitsoni and carinatus
+
+https://www.fishbase.se/summary/7139
+
+Maturity: Lm ?  range ? - ? cm
+
+Max length : 84.0 cm TL male/unsexed; (Ref. 124151); max. published weight: 5.1 kg (Ref. 124151)
+
+https://www.fishbase.se/summary/7137
+
+Maturity: Lm 57.5, range 55 - 60 cm
+
+Max length : 100.0 cm TL male/unsexed; (Ref. 1371); max. reported age: 19 years (Ref. 7059)
+
+However I only have one biomass data for them so taking an average max length of 93 and maturity of 52
+
+### Bathyraja eatonii
+
+https://www.fishbase.se/summary/Bathyraja-eatonii.html
+
+Maturity: Lm ?  range ? - ? cm
+
+Max length : 100.0 cm TL male/unsexed
+
+a=0.00513
+
+b=3.12
+
+Biology: Oviparous. Eggs have horn-like projections on the shell.
+
+
+### Bathyraja irrasa
+
+https://www.fishbase.se/summary/Bathyraja-irrasa.html
+
+Maturity: Lm ?  range ? - ? cm
+
+Max length : 120 cm TL male/unsexed
+
+a=0.00513
+
+b=3.12
+
+Biology: Oviparous. Distinct pairing with embrace. Young may tend to follow large objects, such as their mother. Eggs are oblong capsules with stiff pointed horns at the corners deposited in sandy or muddy flats. Egg capsules are 11.38 cm long and 7.36 cm wide.
+
+### Gobionotothen acuta
+
+https://www.fishbase.se/summary/Gobionotothen-acuta.html
+
+Maturity: Lm ?  range ? - ? cm
+
+Max length : 35.0 cm SL male/unsexed
+
+a=0.00603
+
+b=3.25
+
+Biology: Found in fairly shallow water
+
+### Bathyraja murrayi
+
+https://www.fishbase.se/summary/Bathyraja-murrayi.html
+
+Maturity: Lm ?  range ? - ? cm
+
+Max length : 60.0 cm TL male/unsexed
+
+a=0.00513
+
+b=3.12
+
+Oviparous. Distinct pairing with embrace. Young may tend to follow large objects, such as their mother. Eggs are oblong capsules with stiff pointed horns at the corners deposited in sandy or muddy flats. Egg capsules are 6.0 cm long and 3.4 cm wide. Frequently taken in commercial bottom hauls but not much utilized because of its small size
+
+
+Extracting data from Kieran csv
+
+```{r, eval = F}
+fish_parameters_updated <- read_csv("fish_parameters_updated.csv")
+
+SpIdx <- colnames(rsts_trends)[-(1:2)]
+SpIdx <- gsub(pattern = '\\.',replacement =  " ",x =  SpIdx)
+
+for(iSpecies in SpIdx)
+{
+  temp <- filter(fish_parameters_updated, species == iSpecies)
+  print(temp)
+}
+
+# well there are only 2 common species anyway...
+
+```
+
+
+Data from Dale, let's take that one over fishbase
+
+```{r}
+
+sp_Dale <- readxl::read_excel("Species_parameters_skate.xlsx")
+colnames(sp_Dale) <- sp_Dale[1,]
+colnames(sp_Dale)[1] <- "Species"
+sp_Dale <- sp_Dale[-1,]
+sp_Dale$Linf <- as.numeric(sp_Dale$Linf)*.1
+sp_Dale$K <- as.numeric(sp_Dale$K)
+sp_Dale$t0 <- as.numeric(sp_Dale$t0)
+sp_Dale$a <- as.numeric(sp_Dale$a) *1e6 # converting kg/mm-3 to g/cm-3
+sp_Dale$b <- as.numeric(sp_Dale$b)
+sp_Dale$L50 <- as.numeric(sp_Dale$L50) *.1
+# Extracting l50 from age of toothfish
+sp_Dale$L50[1] <- sp_Dale$Linf[1] *(1-exp(-sp_Dale$K[1]*(as.numeric(sp_Dale$A50[1]))))
+sp_Dale <- sp_Dale[-c(8:11)]
+sp_Dale$L50[7] <- NA # wrong value so removing from now
+sp_Dale <- sp_Dale[c(1:8,10,9),]
+
+```
+
+
+
+
+```{r, eval = F}
+
+# species_df <- data.frame("species" = colnames(rsts_trends)[-(1:2)],
+#                          "l_inf" = c(215, 66, 60, 55, 93, 100, 120, 35, 60),
+#                          "l_mat" = c(49, 26, NA, 27.3, 52, NA, NA, NA, NA),
+#                          "a" = c(0.00631, 0.00120, 0.00129, 0.00468, 0.00209,
+#                                  0.00513, 0.00513, 0.00603, 0.00513),
+#                          "b" = c(3.15, 3.47, 3.46, 3.24, 3.19, 3.12, 3.12, 3.25, 3.12),
+#                          "k_vb" = c(0.05, 0.16, rep(.3,7)),
+#                          "beta" = c(100,200, rep(NA,7)),
+#                          "sigma" = c(2,2, rep(NA,7)))
+
+# Species name in full
+sp_names <- colnames((rsts_trends)[-(1:2)])
+sp_names <- append(sp_names,"Macrourus.sp2", after = 5)
+sp_names[5] <- "Macrourus.caml"
+
+sp_names_idx <- c("D.ele", "C.gun", "C.rhi", "L.squ","M.cam","M.sp2","B.eat","B.irr","G.acu","B.mur")
+
+#Using Dale's data in this
+species_df <- data.frame("species" = sp_names_idx,
+                         "l_inf" = sp_Dale$Linf,
+                         "l_mat" = sp_Dale$L50,
+                         "a" = sp_Dale$a,
+                         "b" = sp_Dale$b,
+                         "k_vb" = sp_Dale$K,
+                         "t0" = sp_Dale$t0,
+                         "beta" = c(100,200, rep(NA,8)),
+                         "sigma" = c(2,2, rep(NA,8)))
+
+#C.gun mat length is missing, using value from Kieran
+species_df$l_mat[2] <- 26
+
+# G.acu is missing, using fishBase
+species_df[9,2:6] <- c(35,NA,0.00603,3.25,.3)
+
+# Parameters from Dale about eleginoides don't make sense so using Kieran's
+fish_parameters_updated <- read_csv("fish_parameters_updated.csv")
+toothfishKieran <- filter(fish_parameters_updated, species == "Dissostichus eleginoides")
+toothfishKieran <- as.numeric(toothfishKieran$value[c(11,13,14,15,1,NA,9,10)])
+species_df[1,2:9] <- toothfishKieran
+# species_df$t0[1] <- -3.13 # trying value from Dale
+
+# "a" values seem garbage, using fishbase ones
+# species_df$a <- c(0.00631, 0.00120, 0.00129, 0.00468, 0.00209, NA, 0.00513, 0.00513, 0.00603, 0.00513)
+species_df$w_inf <- species_df$a * species_df$l_inf^species_df$b
+species_df$w_mat <- species_df$a * species_df$l_mat^species_df$b
+
+# if some species have t0 and other don't plotGrowth is not happy
+species_df$t0[is.na(species_df$t0)] <- 0
+
+# empirical data only has one Macrourus so keeping first one only
+species_df <- species_df[-6,]
+
+
+# first calibration with average biomass of last 5 years
+
+biomCal <- apply(rsts_trends[9:14,-(1:2)],2,mean) * 1000 # data is in kg, converting to g
+
+
+species_df$biomass_observed <- biomCal
+
+```
+
+rsts_m1_coocur is the cooccurence matrix of the surveys. We can use it as proxy for interaction matrix. However the values are low, there is no diagonal and it's symetrical. Multiplying values per 2 and putting .5 for canibalism.
+
+```{r}
+
+rsts_m1_cooccur <- 2* rsts_m1_cooccur
+rsts_m1_cooccur[rsts_m1_cooccur>1] <- 1
+rsts_m1_cooccur[is.na(rsts_m1_cooccur)] <- .5
+dimnames(rsts_m1_cooccur) <- list("predator" = species_df$species, "prey" = species_df$species)
+
+# filling in values from fish_interaction_matrix.csv | actually cannibalism is set to .2 there so doing the same
+# rsts_m1_cooccur[1,1] <- .2
+# rsts_m1_cooccur[2,2] <- .2
+
+# interaction matrix is different for eleginoides and gunnari between Nicole's and Kieran's data
+
+```
+
+
+# First run (Rmax set to inf)
+
+```{r}
+
+params <- newMultispeciesParams(species_params = species_df, interaction = rsts_m1_cooccur)
+
+# saveRDS(params, file = "params/params0.RDS")
+params <- readRDS("params/params0.RDS")
+sim <- project(params)
+
+plotCalibration(sim)
+
+```
+
+Let's tuneParams that thing!
+
+```{r}
+params_steady <- steady(params)
+# running it once, did not converge and some erepro are over 1
+
+params_steady <- calibrateBiomass(params_steady) 
+plotBiomassObservedVsModel(params_steady)
+# looks like chaos, but we just matched total biomass of species, not the spectrum themselves
+
+params_steady <- matchBiomasses(params_steady)
+plotSpectra(params_steady)
+plotBiomassObservedVsModel(params_steady)
+# matching biomasses but have to recalculate steady state
+
+params_steady <- steady(params_steady)
+# converged this time
+plotSpectra(params_steady, power = 2)
+
+sim <- project(params_steady, t_max = 1000)
+plotBiomass(sim)
+# still not steady for some reasons
+
+# trying to find steady state from end of previous sim
+initialN(params_steady) <- sim@n[dim(sim@n)[1],,]
+
+params_steady2 <- steady(params_steady,t_max = 1000)
+sim2 <- project(params_steady2, t_max = 2000)
+plotBiomass(sim2)
+
+# why does it say it's steady if it's not?! I know! steady looks at egg reproduction but it's going to fail for things with erepro >1
+# Let's do another round of matching and adjusting erepro
+
+params_steady2 <- calibrateBiomass(params_steady2) 
+plotBiomassObservedVsModel(params_steady2)
+params_steady2 <- matchBiomasses(params_steady2)
+plotSpectra(params_steady2)
+plotBiomassObservedVsModel(params_steady2)
+
+params_steady3 <- steady(params_steady2)
+sim3 <- project(params_steady3, t_max = 1000)
+plotBiomass(sim3)
+
+# erepro <1 now but I still have a species going extinct
+params_steady4 <- steady(params_steady3, tol = 0.001)
+sim4 <- project(params_steady4, t_max = 1000)
+plotBiomass(sim4)
+plotBiomassObservedVsModel(sim4@params)
+
+# going to setup Rmax to the intial abundance of sim4 where everything coexist
+sim5 <- sim4
+sim5@params@species_params$R_max <- apply(sim5@params@initial_n,1,sum)
+sim5 <- project(sim5@params, t_max = 1000)
+plotBiomass(sim5)
+# doesn't work
+
+params_steady5 <- steady(sim5@params, tol = 0.001)
+sim5 <- project(params_steady5, t_max = 1000)
+plotBiomass(sim5)
+# now we are back to a similar result of sim4, one species still go extinct, after 300 years of coexistence
+plotGrowthCurves(sim5, species_panel = T)
+plotDiet2(sim5)
+# C.rhi is eaten a lot, maybe that's why
+sim5@params@interaction
+# going to reduce the exposure of C.rhi
+sim5@params@interaction[,3] <- sim5@params@interaction[,3]*0.75
+
+#lets start from the beginning
+
+sim6 <- fastCalib(sim5@params)
+plotBiomass(sim6)
+
+# this is not working
+# let's do without matching biomass first, any coexistence is welcome
+
+params_steady6 <- steady(sim5@params, tol = 0.001)
+sim6 <- project(params_steady6, t_max = 500)
+plotBiomass(sim6)
+
+# species are declining, no convergence is found
+plotDiet2(sim6)
+plotGrowthCurves(sim6, species_panel = T)
+# somehow species feed more on C.rhi even after I scaled down the column in the interaction matrix to reduce predation pressure on them
+plotPredMort(sim6)
+
+
+# let's try a wide range of rmax
+
+sim7 <- fastOptim(sim6@params)
+plotBiomass(sim7)
+
+# back to the beginning, C rhi is still going extinct, but with anothe species now
+
+```
+
+
+```{r}
+# function for calibration of Rmax
+
+fastOptim <- function(params)
+{
+
+# create set of params for the optimisation process
+params_optim <- params
+vary <-  log10(params_optim@species_params$R_max) # variable to explore
+params_optim<-setParams(params_optim)
+# set up workers
+noCores <- parallel::detectCores() - 1 # keep some spare core
+cl <- parallel::makeCluster(noCores, setup_timeout = 0.5)
+setDefaultCluster(cl = cl)
+clusterExport(cl, as.list(ls()))
+clusterEvalQ(cl, {
+  library(mizerExperimental)
+  library(optimParallel)
+})
+optim_result <- optimParallel::optimParallel(par=vary,getError,params=params_optim, dat = sim@params@species_params$biomass_observed, method   ="L-BFGS-B", lower=c(rep(3,dim(params_optim@species_params)[1])), upper= c(rep(15,dim(params_optim@species_params)[1])),
+                                             parallel=list(loginfo=TRUE, forward=TRUE))
+stopCluster(cl)
+
+params_optim@species_params$R_max <- 10^optim_result$par 
+
+sim_optim <- project(params_optim, t_max = 2000)
+
+return(sim_optim)
+}
+```
+
+
+```{r}
+# function running tuneParams function in a row for a quick start to a calibration
+fastCalib <- function(params)
+{
+params <- calibrateBiomass(params) 
+params <- matchBiomasses(params)
+params <- steady(params, tol = 0.001)
+sim <- project(params, t_max = 1000)
+return(sim)
+}
+
+```
+
+
+
+
+### Let's optimise from there
+
+```{r}
+
+vary <- log10(sim3@params@species_params$R_max)
+## test it
+getError(vary = vary, params = params, dat = sim3@params@species_params$biomass_observed)
+
+
+```
+
+```{r}
+
+# create set of params for the optimisation process
+params_optim <- sim3@params
+vary <-  log10(params_optim@species_params$R_max) # variable to explore
+params_optim<-setParams(params_optim)
+# set up workers
+noCores <- detectCores() - 1 # keep some spare core
+cl <- makeCluster(noCores, setup_timeout = 0.5)
+setDefaultCluster(cl = cl)
+clusterExport(cl, as.list(ls()))
+clusterEvalQ(cl, {
+  library(mizerExperimental)
+  library(optimParallel)
+})
+optim_result <- optimParallel::optimParallel(par=vary,getError,params=params_optim, dat = sim@params@species_params$biomass_observed, method   ="L-BFGS-B", lower=c(rep(3,dim(params_optim@species_params)[1])), upper= c(rep(15,dim(params_optim@species_params)[1])),
+                                             parallel=list(loginfo=TRUE, forward=TRUE))
+stopCluster(cl)
+
+saveRDS(optim_result, "params/optimRes1.rds")
+
+```
+
+```{r}
+
+optim_result$par
+
+params_optim@species_params$R_max <- 10^optim_result$par 
+
+sim4 <- project(params_optim, t_max = 2000)
+
+plotBiomass(sim4)
+
+```
+
+Still no
+Let's go manual
+
+
+```{r}
+
+sim4@params@species_params$erepro[sim4@params@species_params$erepro>1] <- 1
+
+sim5 <- project(sim4@params, t_max = 2000)
+
+plotBiomass(sim5)
+```
+
+Let's try again the optimisation
+
+
+```{r}
+
+# create set of params for the optimisation process
+params_optim <- sim5@params
+vary <-  log10(params_optim@species_params$R_max) # variable to explore
+params_optim<-setParams(params_optim)
+# set up workers
+noCores <- detectCores() - 1 # keep some spare core
+cl <- makeCluster(noCores, setup_timeout = 0.5)
+setDefaultCluster(cl = cl)
+clusterExport(cl, as.list(ls()))
+clusterEvalQ(cl, {
+  library(mizerExperimental)
+  library(optimParallel)
+})
+optim_result <- optimParallel::optimParallel(par=vary,getError,params=params_optim, dat = sim@params@species_params$biomass_observed, method   ="L-BFGS-B", lower=c(rep(3,dim(params_optim@species_params)[1])), upper= c(rep(15,dim(params_optim@species_params)[1])),
+                                             parallel=list(loginfo=TRUE, forward=TRUE))
+stopCluster(cl)
+
+saveRDS(optim_result, "params/optimRes2.rds")
+
+```
+
+```{r}
+
+params_optim@species_params$R_max <- 10^optim_result$par 
+
+sim6 <- project(params_optim, t_max = 2000)
+
+plotBiomass(sim6)
+
+# why does it collapse all the time?
+
+vary <- log10(sim6@params@species_params$R_max)
+getError(vary = vary, params = params, dat = sim6@params@species_params$biomass_observed)
+
+#geterror doesn't work so optim doesn't
+
+# what happens if I put rmax to the winf limit?
+
+species_params(sim6@params)$R_max <- resource_params(sim6@params)$kappa * species_params(sim6@params)$w_inf^-1
+
+sim7 <- project(sim6@params, t_max = 3000)
+
+plotBiomass(sim7)
+plotDiet2(sim7)
+plotGrowthCurves(sim7, species_panel = T)
+
+# growth curves not that good, might need to increase the kappa
+```
+
+
+
+
+
+
+# optimisation template
+
+```{r}
+
+vary <- log10(params@species_params$R_max)
+## test it
+getError(vary = vary, params = params, dat = sim@params@species_params$biomass_observed)
+
+
+```
+
+```{r}
+
+# create set of params for the optimisation process
+params_optim <- params
+vary <-  log10(params_optim@species_params$R_max) # variable to explore
+params_optim<-setParams(params_optim)
+# set up workers
+noCores <- detectCores() - 1 # keep some spare core
+cl <- makeCluster(noCores, setup_timeout = 0.5)
+setDefaultCluster(cl = cl)
+clusterExport(cl, as.list(ls()))
+clusterEvalQ(cl, {
+  library(mizerExperimental)
+  library(optimParallel)
+})
+optim_result <- optimParallel::optimParallel(par=vary,getError,params=params_optim, dat = sim@params@species_params$biomass_observed, method   ="L-BFGS-B", lower=c(rep(3,dim(params_optim@species_params)[1])), upper= c(rep(15,dim(params_optim@species_params)[1])),
+                                             parallel=list(loginfo=TRUE, forward=TRUE))
+stopCluster(cl)
+
+saveRDS(optim_result, "params/optimRes1.rds")
+
+```
+
+
+
+```{r}
+
+optim_result$par
+
+params_optim@species_params$R_max <- 10^optim_result$par 
+
+sim <- project(params_optim)
+
+plotCalibration(sim)
+
+plotDiet2(sim)
+
+plotPredObsAbun(sim, dat = sim@params@species_params$biomass_observed)
+
+```
+
+
+
+
+
+# Random
+
+## Fixing shiny gamma from mizerhowto
+
+```{r}
+
+shiny_gamma <- function(params, dat = NULL)
+{
+  params_shiny <- params
+  
+  ui=fluidPage(
+    titlePanel("Gamma calibration"),
+    fluidRow(
+      column(4,
+             wellPanel(
+               actionButton("run", "Run the simulation")
+             ),
+             wellPanel(
+               uiOutput("toggle_gamma"))
+      )
+      ,
+      column(6,
+             plotOutput("plotGrowth", width = 600, height = 600),
+             plotOutput("plotFeed", width = 600, height = 600),
+             plotOutput("plotBiom", width = 600, height = 600),
+             if(!is.null(dat)) plotOutput("plotYield", width = 600, height = 600)
+      )
+    )
+  )
+  
+  server = function(input, output) {
+    output$toggle_gamma <- renderUI({
+      n_spec <- length(params_shiny@species_params$species)
+      lapply(1:n_spec, function(i) {
+        div(
+          paste(params_shiny@species_params$species[i] , 'Initial Value:' , 
+                formatC(params_shiny@species_params$gamma[i], format = "e", digits = 2)), 
+          numericInput(inputId = paste0('gamma' , i), 
+                       label = "Search volume:", 
+                       value = as.numeric(formatC(params_shiny@species_params$gamma[i], format = "e", digits = 2)))
+        )
+      })
+    })
+    
+    # reactive expression
+    sim <- eventReactive(input$run, {
+      n_spec <- length(params_shiny@species_params$species)
+      new_gamma <- c(sapply(1:n_spec, function(i) {
+        inputName <- paste("gamma", i, sep = "")
+        input[[inputName]]
+      }))
+      
+      # print(new_gamma)
+      shiny_gamma_output <<- new_gamma
+      
+      params_shiny@species_params$gamma <- new_gamma
+      params_shiny <- setParams(params_shiny)
+      # print(params_shiny@species_params$gamma) # check if everything is going well
+      sim_shiny <- project(params_shiny, effort = 1, t_max = 100)
+    })
+    
+    output$plotGrowth <- renderPlot({
+      plotGrowthCurves2(sim(), species_panel = T)
+    })
+    
+    output$plotFeed <- renderPlot({
+      plotFeedingLevel2(sim(), include_critical = T)
+    })
+    
+    output$plotBiom <- renderPlot({
+      plotCalibration(sim())
+    })
+    if(!is.null(dat))
+    {output$plotYield <- renderPlot({
+      plotPredObsYield(sim(),dat)
+    })
+    }
+  }
+  
+  shinyApp(ui, server)
+}
+
+```
+

@@ -1,0 +1,406 @@
+---
+title: "Experiments"
+output: html_document
+---
+
+Packages
+
+```{r}
+
+library(mizer)
+library(viridisLite)
+library(viridis)
+library(ggplot2)
+library(ggrepel)
+library(tidyverse)
+library(mizerExperimental)
+library(mizerHowTo)
+
+# remotes::install_github("sizespectrum/mizerHowTo")
+# install.packages("mizer")
+```
+
+Bring in model and check it is at equilibrium (are biomass values changing)
+
+```{r}
+
+sim_loop <- readRDS("sim_optim_e.RDS")
+params <- upgradeParams(sim_loop@params)
+
+initialN(params) <- sim_loop@n[dim(sim_loop@n)[1],,]
+initialNResource(params) <- sim_loop@n_pp[dim(sim_loop@n_pp)[1],]
+sim_loop2 <- project(params, effort=0, t_max=300, progress_bar = F)
+
+params <- sim_loop2@params
+projectToSteady(params)
+initialN(params) <- sim_loop2@n[dim(sim_loop2@n)[1],,]
+initialNResource(params) <- sim_loop2@n_pp[dim(sim_loop2@n_pp)[1],]
+sim_loop3 <- project(params, effort=0, t_max=300, progress_bar = F)
+
+params <- sim_loop3@params
+projectToSteady(params)
+initialN(params) <- sim_loop3@n[dim(sim_loop3@n)[1],,]
+initialNResource(params) <- sim_loop3@n_pp[dim(sim_loop3@n_pp)[1],]
+sim_loop4 <- project(params, effort=0, t_max=300, progress_bar = F)
+
+plotBiomass(sim_loop2)
+plotBiomass(sim_loop3)
+plotBiomass(sim_loop4)
+plotSpectra(sim_loop4)
+# saveRDS(sim_loop4, "sim_loop4.rds")
+
+#definitely reaching equlillibrium (probably by sim_loop3)
+
+```
+
+
+Getting n and n_pp for plotting community size spectrums
+```{r}
+#getting n and n_pp for plotting
+# n_base <- sim_loop4@n[dim(sim_loop4@n)[1],,] #get finaltime step (is this how I do that?)
+n_base <- sim_loop4@n[1,,] #get finaltime step (is this how I do that?)
+n_pp_base <- sim_loop4@n_pp[dim(sim_loop4@n_pp)[1],] #get finaltime step (is this how I do that?)
+#now want this for each experiment output. ^
+plot_base_ii <- reshape::melt(n_base)
+plot_base_i <- plot_base_ii %>% 
+  group_by(w) %>% 
+  mutate(total_n= sum(value)) %>% 
+  ungroup()
+
+plot_base <- plot_base_i
+
+ggplot(plot_base, aes(x=w, y=total_n)) +
+    scale_fill_brewer(palette = "PuOr") +
+    theme_classic() + geom_point() +  scale_x_log10() +scale_y_log10()
+
+#now want to do this for each scenario, in loop below. Just get n and n_pp outputs for final time step?
+ 
+```
+
+
+Creating grid for experiments
+```{r}
+library(data.table)
+
+# kappa (base, +5%, -5%) Lambda (base, +1/2%, -1/2%)
+kappa_2 <- c(0.256,0.2688,0.243)
+lambda_2 <- c(2.05,2.06,2.040)
+
+# kappa (base, +5%, -5%) Lambda (base, +5%, -5%)
+# kappa_5 <- c(0.256,0.2688,0.243)
+# lambda_5 <- c(2.05,2.153,1.948)
+
+# grid <- expand.grid(kappa = kappa_2, lambda= lambda_2)
+grid <- expand.grid(kappa = kappa_2, lambda= lambda_2)
+
+
+grid$name <- c("Base", "KI", "KD", "LI", "KI_LI", "KD_LI", "LD", "KI_LD", "KD_LD") 
+```
+
+Experiment loop
+```{r}
+
+#why does this have to be species params, not just whole params file?
+params <- sim_loop4@params #  replace with your param file
+# inter <- sim_loop2@params@interaction
+
+max_t <- 50 # How long you want sims to run
+
+output <- # create output object with grid
+  grid %>%
+  group_by(name)%>% # group by model scenario (i.e. name)
+  nest() %>% # create nested object
+  mutate(param_list = map(data, ~setResource(params, kappa = .$kappa,lambda = .$lambda))) %>% 
+  mutate(param_list2 = map(param_list, ~projectToSteady(., effort=0, t_max= max_t, progress_bar= F))) %>% # run model projection
+  mutate(mod_output = map(param_list2, ~project(., effort=0, t_max= max_t, progress_bar= F))) %>% # run model projection
+  mutate(biomass = map(mod_output, ~reshape::melt(getBiomass(.)))) %>% 
+  mutate(diet = map(param_list2, ~reshape::melt(getDiet(., proportion= F)))) %>% 
+  # mutate(n= map(mod_output, ~reshape::melt(getN(.)))) %>% 
+    mutate(n= map(mod_output, ~reshape::melt((.@n[1,,])))) %>% 
+  mutate(n_pp = map(mod_output, ~.@n_pp[1,])) ##shit what is the n_pp or is there no function for this?
+
+output %>%
+  select(name, biomass) %>% #choose only the name and biomass dataframes
+  unnest(biomass) %>%
+  fwrite("df_Biomass_b.csv") # save a biomass dataframe with all the combined scenarios
+
+output %>%
+select(name, diet) %>% 
+  unnest(diet) %>%
+  fwrite("df_diet_d.csv") 
+
+output %>% 
+  select(name, n) %>% 
+  unnest(n) %>% 
+  fwrite("df_n.csv")
+
+output %>% 
+  select(name, n_pp) %>% 
+  unnest(n_pp) %>% 
+  fwrite("df_n_pp.csv")
+
+
+df_biomass <- read.csv("df_Biomass_b.csv")
+df_biomass$name <- as.factor(df_biomass$name)
+grid$name <- as.factor(grid$name)
+df_plot <- left_join(df_biomass, grid)
+
+df_diet <- read.csv("df_diet_d.csv")
+df_diet$name <- as.factor(df_diet$name)
+grid$name <- as.factor(grid$name)
+df_diet2 <- left_join(df_diet, grid)
+
+```
+
+```{r}
+df_n <- read.csv("df_n.csv")
+
+df_n_pp <- read.csv("df_n_pp.csv")
+
+weights <- sim_loop4@params@w_full
+weights_scenarios <- rep(weights,9)
+
+df_plot_npp <- cbind(df_n_pp, weights_scenarios)
+df_plot_npp <- as.data.frame(df_plot_npp)
+ggplot(df_plot_npp, aes(x=log(weights_scenarios), y=log(n_pp), colour = name)) +
+  # facet_wrap(~name) + 
+    theme_classic() + geom_smooth(method="lm",size=0.3,)
+
+#this isn't working
+# df_start <- filter(df_plot_npp, weights_scenarios == 9.331299e-13)
+# df_end <- filter(df_plot_npp, weights_scenarios == 8.936257)
+
+# df_facet <- df_n %>%
+#   filter(sp == "D.mawsoni") %>%
+#   group_by(name, w) %>%
+#   summarise(total_n = sum(value))
+
+df_facet <- df_n %>%
+  group_by(name, w) %>%
+  summarise(total_n = sum(value)) %>%
+  ungroup()
+
+ggplot(df_facet, aes(x=log(w), y=log(total_n), colour = name)) +
+  # facet_wrap(~name) + 
+    theme_classic() + geom_point() +
+   geom_smooth(method = "lm", alpha = 0, size = 0.1)
+# +  scale_x_log10() +scale_y_log10()
+
+
+test_1 <- df_facet %>% filter(name=="Base") %>% select(total_n)
+test_2 <- df_facet %>% filter(name=="KI_LI") %>% select(total_n)
+
+identical(test_1$total_n,test_2$total_n)
+
+#getting values at start and end weight for each scenario
+df_start <- filter(df_facet, w== 8.42e-04) #not quite start as there was a weird lot of values for the first point (probs need to check this)
+df_middle <- filter(df_facet, w== 7.40e+00)
+
+df_end <- filter(df_facet, w== 9.48e+04)
+```
+
+
+First plot biomass stuff
+```{r}
+#kappa exps: +-5%
+df_plot %>%
+  filter(time == max_t) %>% # only use the final year
+  filter(lambda==2.05) %>%
+```
+
+
+```{r}
+ggplot(aes(x=value, y =sp, colour = name))+
+  geom_point() +
+  # facet_wrap(~name) + # separate plot for each scenario
+  scale_x_log10()
+#lambda exps: +-1/2%
+df_plot %>%
+  filter(time == max_t) %>% # only use the final year
+  filter(kappa==0.256) %>%    
+  ggplot(aes(x=value, y =sp, colour = name))+
+  geom_point() +
+  # facet_wrap(~name) + # separate plot for each scenario
+  scale_x_log10()
+
+#both
+df_plot %>%
+  filter(time == max_t) %>% # only use the final year
+  ggplot(aes(x=value, y =sp, colour = name))+
+  geom_point() +
+  # facet_wrap(~name) + # separate plot for each scenario
+  scale_x_log10()
+
+```
+
+
+
+
+Get relative change in excel!
+```{r}
+# df_max <- df_plot
+# df_max <- filter(df_max, time== max_t)
+# fwrite(df_max, "experiments_unedited_b.csv")
+```
+
+
+Now make nice plot
+```{r}
+#bring in edited experiments folder
+df_bioplot <- read.csv("experiments_ED_B.csv")
+
+df_tidy <- df_bioplot %>% 
+  dplyr::mutate(Param_Type = case_when(name == "KI" ~ "kappa",
+                                       name == "KD" ~ "kappa",
+                                       name == "LI" ~ "lambda",
+                                       name == "LD" ~ "lambda",
+                                       name == "KI_LI" ~ "interaction",
+                                       name == "KI_LD" ~ "interaction",
+                                       name == "KD_LI" ~ "interaction",
+                                       name == "KD_LD" ~ "interaction")) %>% 
+  filter(!name=="Base")
+
+#reorder by species w_inf
+sp_params <- sim_loop4@params@species_params
+ordered_sp <- sp_params[order(sp_params$w_inf),]
+df_bioplot$sp <- factor(df_bioplot$sp, levels = ordered_sp$species)
+
+df_tidy$name <- as.factor(df_tidy$name)
+
+df_plot <- df_tidy %>%
+  group_by(name) %>%
+  mutate(total_change = sum(biomass_change)) %>%
+  ungroup()
+df_plot_v2 <- df_plot %>%
+  mutate(name_reordered = fct_reorder(name, total_change)) %>%
+  mutate(name_v2 = fct_relevel(name_reordered, "KI_LI","KI","LI","KI_LD","Base","KD_LI","LD","KD","KD_LD"))
+
+df_plot_KM <- df_plot %>%
+  mutate(name_reordered = fct_reorder(name, total_change)) %>%
+  mutate(name_v2 = fct_relevel(name_reordered, "KI_LI","KI","LI","KI_LD","KD_LI","LD","KD","KD_LD"))
+
+ df_Decrease <- df_plot_KM %>%
+   filter(name_reordered == "KD" | name_reordered == "LD" | name_reordered == "KD_LI" |name_reordered == "KD_LD")
+ 
+ df_plot_KM %>% 
+    ggplot(mapping = aes(x=sp, y=biomass_change, fill= name_v2)) +
+    geom_bar(stat="identity") +
+    geom_bar(data = df_Decrease, aes(x=sp, y=biomass_change, fill=name_reordered), stat="identity")+
+    scale_fill_brewer(palette = "PuOr") +
+   facet_wrap(~Param_Type)+
+    theme_classic() 
+ 
+ df_plot_v2 %>% 
+    ggplot(mapping = aes(x=sp, y=biomass_change, fill= name_v2)) +
+    geom_bar(stat="identity") +
+    geom_bar(data = df_Decrease, aes(x=sp, y=biomass_change, fill=name_reordered), stat="identity")+
+    scale_fill_brewer(palette = "PuOr") +
+    theme_classic() 
+ 
+ #make plots separate 
+df_plot_v3 <- df_plot_v2
+ df_Kappa <- df_plot_v3 %>%
+   filter(name == "KI" | name == "KD" | name == "Base")
+ df_Lambda <- df_plot_v3 %>% 
+   filter(name == "LI" |  name == "Base" | name== "LD")
+ df_Interaction <- df_plot_v3 %>% 
+   filter(name == "KI_LI" | name == "KI_LD" | name == "Base" | name == "KD_LI" |name == "KD_LD")
+#Kappa plot
+df_plot_K <- df_Kappa
+df_plot_K %>% 
+    ggplot(mapping = aes(x=sp, y=biomass_change, fill=name_reordered)) +  geom_bar(stat="identity") +
+    scale_fill_brewer(palette = "PuOr") +
+  coord_cartesian(ylim= c(-0.10, 0.10))+
+    theme_classic() +
+labs(title = "Kappa Exps Biomass Change", y="Relative Biomass Change", x="Species")
+#Lambda plot
+df_plot_L <- df_Lambda
+df_plot_L %>% 
+    ggplot(mapping = aes(x=sp, y=biomass_change, fill=name_reordered)) +  geom_bar(stat="identity") +
+    scale_fill_brewer(palette = "PuOr") +
+    theme_classic() +
+  coord_cartesian(ylim= c(-0.10, 0.10))+
+  labs(title = "Lambda Exps Biomass Change", y="Relative Biomass Change", x="Species")
+#Interaction plot
+df_Decrease_I <- df_Interaction %>%
+   filter(name_reordered == "KD_LI" | name_reordered == "KD_LD")
+df_plot_I <- df_Interaction
+df_plot_I %>% 
+    ggplot(mapping = aes(x=sp, y=biomass_change, fill=name_v2)) +  geom_bar(stat="identity") +
+  geom_bar(data = df_Decrease_I, aes(x=sp, y=biomass_change, fill=name_reordered), stat="identity")+
+    scale_fill_brewer(palette = "PuOr") +
+    theme_classic() +
+  coord_cartesian(ylim= c(-0.10, 0.10))+
+labs(title = "Interaction Exps Biomass Change", y="Relative Biomass Change", x="Species")
+
+#get same scale
+
+
+```
+
+Lets check initial matrix (matrix_edit) verse Base matrix (matrix_Base)
+
+```{r}
+#initial model
+library(igraph)
+params <- sim_loop4@params
+
+df_2 <- getDiet(params, proportion=F)
+
+plot_dat <- melt(df_2)
+dim(plot_dat)
+colnames(plot_dat) <- c("Predator", "size", "Prey", "biomass")
+#summarise by biomass
+df_summary <- plot_dat %>% 
+  group_by(Predator, Prey) %>% 
+  summarise(totalbiomass = sum(biomass))
+#convert data frame to matrix
+matrix_biomass_pred <- pivot_wider(df_summary, names_from = Predator, values_from = totalbiomass)
+#check format is in matrix form?
+Tmatrix_biomass_pred <- as.matrix(matrix_biomass_pred)
+#rename column with predator names
+rownames(Tmatrix_biomass_pred) <- Tmatrix_biomass_pred[,1]
+#remove column
+matrix_edit <- Tmatrix_biomass_pred[,-1] 
+
+##now plot matrix from loop (BASE)
+
+Base <- readRDS("Base.Rdata")
+# df_test_Base <- filter(df_diet2, name== "Base")
+# dim(df_test_Base)
+colnames(Base) <- c("name", "Predator", "size", "Prey", "biomass","kappa","lambda")
+#summarise by biomass
+df_summary_Base <- Base %>% 
+  group_by(Predator, Prey) %>% 
+  summarise(totalbiomass = sum(biomass))
+#convert data frame to matrix
+##matrix_biomass_prey <- pivot_wider(df_summary, names_from = Prey, values_from = totalbiomass)
+matrix_biomass_Base <- pivot_wider(df_summary_Base, names_from = Predator, values_from = totalbiomass)
+#check format is in matrix form?
+##Tmatrix_biomass_prey <- as.matrix(matrix_biomass_prey)
+Tmatrix_biomass_Base <- as.matrix(matrix_biomass_Base)
+#rename column with predator names
+rownames(Tmatrix_biomass_Base) <- Tmatrix_biomass_Base[,1]
+#remove column
+matrix_edit_Base <- Tmatrix_biomass_Base[,-1] 
+
+```
+
+Split Up diet data into different experiments (run before above!)
+```{r}
+df_diet3 <- df_diet2
+dim(df_diet3)
+colnames(df_diet3) <- c("name", "Predator", "size", "Prey", "biomass", "kappa", "lambda")
+
+#first want to split into the 9 different experiments
+
+df_split <- split(df_diet3, df_diet3$name)
+#Save different files for each "name" (experiments)
+ allNames <- names(df_split)
+ for(thisName in allNames){
+     saveName = paste0(thisName, '.Rdata')
+     saveRDS(df_split[[thisName]], file = saveName)
+ }
+```
+
+

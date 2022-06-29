@@ -1,0 +1,242 @@
+---
+title: "Experiments"
+output: html_document
+---
+
+Packages
+
+```{r}
+
+library(mizer)
+library(viridisLite)
+library(viridis)
+library(ggplot2)
+library(ggrepel)
+library(tidyverse)
+library(mizerExperimental)
+library(mizerHowTo)
+
+# remotes::install_github("sizespectrum/mizerHowTo")
+# install.packages("mizer")
+```
+
+Bring in model and check it is at equilibrium (are biomass values changing)
+
+```{r}
+
+sim_loop <- readRDS("sim_optim_e.RDS")
+params <- upgradeParams(sim_loop@params)
+
+initialN(params) <- sim_loop@n[dim(sim_loop@n)[1],,]
+initialNResource(params) <- sim_loop@n_pp[dim(sim_loop@n_pp)[1],]
+sim_loop2 <- project(params, effort=0, t_max=300, progress_bar = F)
+
+params <- sim_loop2@params
+projectToSteady(params)
+initialN(params) <- sim_loop2@n[dim(sim_loop2@n)[1],,]
+initialNResource(params) <- sim_loop2@n_pp[dim(sim_loop2@n_pp)[1],]
+sim_loop3 <- project(params, effort=0, t_max=300, progress_bar = F)
+
+params <- sim_loop3@params
+projectToSteady(params)
+initialN(params) <- sim_loop3@n[dim(sim_loop3@n)[1],,]
+initialNResource(params) <- sim_loop3@n_pp[dim(sim_loop3@n_pp)[1],]
+sim_loop4 <- project(params, effort=0, t_max=300, progress_bar = F)
+
+plotBiomass(sim_loop2)
+plotBiomass(sim_loop3)
+plotBiomass(sim_loop4)
+
+#definitely reaching equlillibrium (probably by sim_loop3)
+
+```
+
+Creating grid for experiments
+```{r}
+library(data.table)
+
+#kappa (base, +5%, -5%) Lambda (base, +1/2%, -1/2%)
+# kappa_2 <- c(0.256,0.2688,0.243)
+# lambda_2 <- c(2.05,2.06,2.040)
+
+# kappa (base, +5%, -5%) Lambda (base, +5%, -5%)
+kappa_5 <- c(0.256,0.2688,0.243)
+lambda_5 <- c(2.05,2.153,1.948)
+
+# grid <- expand.grid(kappa = kappa_2, lambda= lambda_2)
+grid <- expand.grid(kappa = kappa_5, lambda= lambda_5)
+
+
+grid$name <- c("Base", "KI", "KD", "LI", "KI_LI", "KD_LI", "LD", "KI_LD", "KD_LD") 
+```
+
+Experiment loop
+```{r}
+
+#why does this have to be species params, not just whole params file?
+params <- sim_loop4@params #  replace with your param file
+# inter <- sim_loop2@params@interaction
+
+max_t <- 200 # How long you want sims to run
+
+output <- # create output object with grid
+  grid %>%
+  group_by(name)%>% # group by model scenario (i.e. name)
+  nest() %>% # create nested object
+  mutate(param_list = map(data, ~setResource(params, kappa = .$kappa,lambda = .$lambda))) %>% 
+  mutate(param_list2 = map(param_list, ~projectToSteady(., effort=0, t_max= max_t, progress_bar= F))) %>% # run model projection
+  mutate(mod_output = map(param_list2, ~project(., effort=0, t_max= max_t, progress_bar= F))) %>% # run model projection
+  mutate(biomass = map(mod_output, ~reshape::melt(getBiomass(.)))) %>% 
+  mutate(diet = map(param_list2, ~reshape::melt(getDiet(., proportion= F))))
+# mutate(spectra = map(mod_output, ~plotSpectra(.)))
+
+output %>%
+  select(name, biomass) %>% #choose only the name and biomass dataframes
+  unnest(biomass) %>%
+  fwrite("df_Biomass.csv") # save a biomass dataframe with all the combined scenarios
+
+output %>%
+select(name, diet) %>% 
+  unnest(diet) %>%
+  fwrite("df_diet.csv") 
+
+df_biomass <- read.csv("df_Biomass.csv")
+df_biomass$name <- as.factor(df_biomass$name)
+grid$name <- as.factor(grid$name)
+df_plot <- left_join(df_biomass, grid)
+
+df_diet <- read.csv("df_diet.csv")
+df_diet$name <- as.factor(df_diet$name)
+grid$name <- as.factor(grid$name)
+df_diet2 <- left_join(df_diet, grid)
+
+```
+
+First plot biomass stuff
+```{r}
+#kappa exps: +-5%
+df_plot %>%
+  filter(time == max_t) %>% # only use the final year
+  filter(lambda==2.05) %>%    
+  ggplot(aes(x=value, y =sp, colour = name))+
+  geom_point() +
+  # facet_wrap(~name) + # separate plot for each scenario
+  scale_x_log10()
+#lambda exps: +-5%
+df_plot %>%
+  filter(time == max_t) %>% # only use the final year
+  filter(kappa==0.256) %>%    
+  ggplot(aes(x=value, y =sp, colour = name))+
+  geom_point() +
+  # facet_wrap(~name) + # separate plot for each scenario
+  scale_x_log10()
+```
+
+
+Get relative change in excel!
+```{r}
+# df_max <- df_plot
+# df_max <- filter(df_max, time== max_t)
+# fwrite(df_max, "experiments_unedited.csv")
+```
+
+
+Now make nice plot
+```{r}
+#bring in edited experiments folder
+df_bioplot <- read.csv("experiments_ED.csv")
+
+#reorder by species w_inf
+sp_params <- sim_loop4@params@species_params
+ordered_sp <- sp_params[order(sp_params$w_inf),]
+df_bioplot$sp <- factor(df_bioplot$sp, levels = ordered_sp$species)
+
+df_bioplot$name <- as.factor(df_bioplot$name)
+
+df_plot <- df_bioplot %>% 
+  group_by(name) %>% 
+  mutate(total_change = sum(biomass_change)) %>% 
+  ungroup()
+
+df_plot_v2 <- df_plot %>% 
+  mutate(name_reordered = fct_reorder(name, total_change)) %>% 
+  mutate(name_v2 = fct_relevel(name_reordered, "KI_LI","LI","KD_LI","KI","Base","KD","KI_LD", "LD", "KD_LD"))
+ 
+ df_Decrease <- df_plot_v2 %>% 
+   filter(name_reordered == "KD" | name_reordered == "LD" | name_reordered == "KD_LD" |name_reordered == "KI_LD") 
+ df_plot_v2 %>% 
+    ggplot(mapping = aes(x=sp, y=biomass_change, fill= name_v2)) +
+    geom_bar(stat="identity") +
+    geom_bar(data = df_Decrease, aes(x=sp, y=biomass_change, fill=name_reordered), stat="identity")+
+    scale_fill_brewer(palette = "PuOr") +
+    theme_classic() 
+
+
+```
+
+Lets check initial matrix (matrix_edit) verse Base matrix (matrix_Base)
+
+```{r}
+#initial model
+library(igraph)
+params <- sim_loop4@params
+
+df_2 <- getDiet(params, proportion=F)
+
+plot_dat <- melt(df_2)
+dim(plot_dat)
+colnames(plot_dat) <- c("Predator", "size", "Prey", "biomass")
+#summarise by biomass
+df_summary <- plot_dat %>% 
+  group_by(Predator, Prey) %>% 
+  summarise(totalbiomass = sum(biomass))
+#convert data frame to matrix
+matrix_biomass_pred <- pivot_wider(df_summary, names_from = Predator, values_from = totalbiomass)
+#check format is in matrix form?
+Tmatrix_biomass_pred <- as.matrix(matrix_biomass_pred)
+#rename column with predator names
+rownames(Tmatrix_biomass_pred) <- Tmatrix_biomass_pred[,1]
+#remove column
+matrix_edit <- Tmatrix_biomass_pred[,-1] 
+
+##now plot matrix from loop (BASE)
+
+Base <- readRDS("Base.Rdata")
+# df_test_Base <- filter(df_diet2, name== "Base")
+# dim(df_test_Base)
+colnames(Base) <- c("name", "Predator", "size", "Prey", "biomass","kappa","lambda")
+#summarise by biomass
+df_summary_Base <- Base %>% 
+  group_by(Predator, Prey) %>% 
+  summarise(totalbiomass = sum(biomass))
+#convert data frame to matrix
+##matrix_biomass_prey <- pivot_wider(df_summary, names_from = Prey, values_from = totalbiomass)
+matrix_biomass_Base <- pivot_wider(df_summary_Base, names_from = Predator, values_from = totalbiomass)
+#check format is in matrix form?
+##Tmatrix_biomass_prey <- as.matrix(matrix_biomass_prey)
+Tmatrix_biomass_Base <- as.matrix(matrix_biomass_Base)
+#rename column with predator names
+rownames(Tmatrix_biomass_Base) <- Tmatrix_biomass_Base[,1]
+#remove column
+matrix_edit_Base <- Tmatrix_biomass_Base[,-1] 
+
+```
+
+Split Up diet data into different experiments (run before above!)
+```{r}
+df_diet3 <- df_diet2
+dim(df_diet3)
+colnames(df_diet3) <- c("name", "Predator", "size", "Prey", "biomass", "kappa", "lambda")
+
+#first want to split into the 9 different experiments
+
+df_split <- split(df_diet3, df_diet3$name)
+#Save different files for each "name" (experiments)
+ allNames <- names(df_split)
+ for(thisName in allNames){
+     saveName = paste0(thisName, '.Rdata')
+     saveRDS(df_split[[thisName]], file = saveName)
+ }
+```
+
+

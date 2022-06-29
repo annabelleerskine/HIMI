@@ -1,0 +1,1320 @@
+---
+title: toothfish project
+author: RF
+output:
+  html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r}
+library(tidyverse)
+library(mizer)
+library(mizerExperimental)
+library(mizerHowTo)
+library(parallel)
+library(tictoc)
+load("size_spec_inputs.RData")
+```
+
+### Helpful functions
+
+
+```{r}
+# function for calibration of Rmax
+
+fastOptim <- function(params)
+{
+
+# create set of params for the optimisation process
+params_optim <- params
+vary <-  log10(params_optim@species_params$R_max) # variable to explore
+params_optim<-setParams(params_optim)
+# set up workers
+noCores <- parallel::detectCores() - 1 # keep some spare core
+cl <- parallel::makeCluster(noCores, setup_timeout = 0.5)
+setDefaultCluster(cl = cl)
+clusterExport(cl, varlist = "cl",envir=environment())
+clusterEvalQ(cl, {
+  library(mizerExperimental)
+  library(optimParallel)
+})
+optim_result <- optimParallel::optimParallel(par=vary,getError,params=params_optim, dat = params_optim@species_params$biomass_observed, data_type = "SSB", method   ="L-BFGS-B", lower=c(rep(3,dim(params_optim@species_params)[1])), upper= c(rep(15,dim(params_optim@species_params)[1])),
+                                             parallel=list(loginfo=TRUE, forward=TRUE))
+stopCluster(cl)
+
+params_optim@species_params$R_max <- 10^optim_result$par 
+
+sim_optim <- project(params_optim, t_max = 2000)
+
+return(sim_optim)
+}
+```
+
+JB: Need to modify getError to calibrate to biomass of selected size classes in the survey data....Need the size distribution from the survey.
+
+```{r}
+# function running tuneParams function in a row for a quick start to a calibration
+fastCalib <- function(params, match = F)
+{
+params <- calibrateBiomass(params) # changes kappa and rmax
+if(match) params <- matchBiomasses(params) # set rmax to inf and adjust erepro
+params <- steady(params, tol = 0.001)
+sim <- project(params, t_max = 1000)
+return(sim)
+}
+
+```
+JB:  The above also needfs to only take the biomass of selected size classes (e.g. some min size probably up to around wmat would be my guess)
+
+```{r}
+# removing effort = 1 so always using intial effort and removing /1e6 so everything is in grams
+
+getError2 <- function (vary, params, dat, data_type = "catch", tol = 0.1, 
+    timetorun = 10) 
+{
+    params@species_params$R_max[] <- 10^vary[1:length(params@species_params$R_max)]
+    params <- setParams(params)
+    params <- projectToSteady(params, distance_func = distanceSSLogN, 
+        tol = tol, t_max = 200, return_sim = F)
+    sim <- project(params, t_max = timetorun, progress_bar = F)
+    if (data_type == "SSB") {
+        output <- getSSB(sim)[timetorun, ]
+    }
+    if (data_type == "catch") {
+        output <- getYield(sim)[timetorun, ]
+    }
+    pred <- log(output)
+    dat <- log(dat)
+    discrep <- pred - dat
+    discrep <- (sum(discrep^2))
+    return(discrep)
+}
+
+
+```
+
+
+```{r}
+
+getErrorTime <- function(vary,params,dat,effort,env=state,tol = 0.1) {
+  
+  params@species_params$R_max[1:9]<-10^vary[1:9]
+  params@species_params$erepro[1:9]<-vary[10:18]
+  params@gear_params$catchability[1]<-vary[19]
+
+  
+  params <- setParams(params)
+  # run to steady state and update params
+  # env$params<- projectToSteady(env$params, distance_func = distanceSSLogN,
+  #                 tol = tol, t_max = 200,return_sim = F)
+  
+  params_steady<- projectToSteady(params, distance_func = distanceSSLogN,
+                                  tol = tol, t_max = 200,return_sim = F)
+  
+  #run time-varying effort model tthough time with new erepro
+  
+  simt <- project(params_steady, effort = effort, initial_n =  params_steady@initial_n, initial_n_pp = params_steady@initial_n_pp)
+  
+  # get biomass through time - here could restrict sizes by indexing the relevant values of w
+  
+  biomass <- sweep(simt@n, 3, simt@params@w * simt@params@dw, "*")
+  
+  #get yield through time from model:
+  
+  f_gear<-getFMortGear(params,effort)
+  yield_species_gear <- apply(sweep(f_gear, c(1, 3, 4), biomass, "*"),
+                              c(1, 2, 3), sum)
+  # yield_species_gear
+  
+  yield_species <-apply(yield_species_gear, c(1, 3), sum)
+  
+  yield_frame <- melt(yield_species)
+  
+  # leave out spin up and change units to tonnes    
+  # y<-yield_frame[yield_frame$time >= 1947,]
+  
+  # disregard zeroes - these were NAs only filled in to run the model   
+  
+  obs<-dat$catchT
+  pred<-yield_frame$value[1:18] # only selecting D.ele for now
+  
+  # sum of squared errors, could use  log-scale of predictions and data (could change this or use other error or likelihood options)
+  
+  error <- sum((log(pred) - log(obs))^2,na.rm=T)
+  
+  # can use a strong penalty on the error to ensure we reach a minimum of 10% of the data (biomass or catch) for each species
+  # if(any(pred < 0.1*dat)) discrep <- discrep + 1e10
+  
+  return(error)
+  
+}
+
+
+```
+
+
+For setup, run all the blocks above. Do not knit.
+Latest simulation calibrated is sim16 (saved as params/params6.RDS)
+
+### Calibration
+
+The following param object is a Mizer params object assembled from different dataset from the toothfish team. So it's either empirical data or default mizer value. The interaction matrix is approximated from a cooccurence matrix of the survey, however the values are rather low so they've been multiplied by 2.
+
+```{r}
+params <- readRDS("params/params6.RDS")
+```
+
+What does it look like?
+
+```{r}
+sim <- project(params)
+
+plotCalibration(sim)
+```
+
+
+Let's use the functions from tuneParams first!
+
+```{r}
+params_steady <- steady(params)
+# running it once, did not converge and some erepro are over 1
+
+params_steady <- calibrateBiomass(params_steady) 
+plotBiomassObservedVsModel(params_steady)
+# looks like chaos, but we just matched total biomass of species, not the spectrum themselves
+
+params_steady <- matchBiomasses(params_steady)
+plotSpectra(params_steady)
+plotBiomassObservedVsModel(params_steady)
+# matching biomasses but have to recalculate steady state
+
+params_steady <- steady(params_steady)
+# converged this time
+plotSpectra(params_steady, power = 2)
+
+sim <- project(params_steady, t_max = 1000)
+plotBiomass(sim)
+# still not steady for some reasons
+```
+
+
+trying to find steady state from end of previous sim
+
+
+```{r}
+initialN(params_steady) <- sim@n[dim(sim@n)[1],,]
+params_steady2 <- steady(params_steady,t_max = 1000)
+sim2 <- project(params_steady2, t_max = 1000)
+plotBiomass(sim2)
+```
+
+
+This is not going to work as long as erepro > 1
+
+Rematching biomass
+
+```{r}
+
+sim3 <- fastCalib(sim2@params)
+plotBiomass(sim3)
+
+```
+
+erepro are < 1 now but C.rhi goes extinct from ~300 years 
+
+```{r}
+plotBiomassObservedVsModel(sim3)
+```
+
+
+going to setup Rmax to the intial abundance of sim4 where everything coexist
+
+```{r}
+sim4 <- sim3
+sim4@params@species_params$R_max <- apply(sim4@params@initial_n,1,sum)
+sim4 <- project(sim4@params, t_max = 1000)
+plotBiomass(sim4)
+```
+
+Doesn't work at all
+```{r}
+params_steady4 <- steady(sim4@params, tol = 0.001)
+sim5 <- project(params_steady4, t_max = 1000)
+plotBiomass(sim5)
+```
+
+
+now we are back to a similar result of sim3, one species still go extinct, after 300 years of coexistence
+
+```{r}
+plotGrowthCurves(sim5, species_panel = T)
+plotDiet2(sim5)
+```
+
+This looks pretty good though
+
+C.rhi is eaten a lot, maybe that's why
+```{r}
+
+sim5@params@interaction
+# going to reduce the exposure of C.rhi
+sim5@params@interaction[,3] <- sim5@params@interaction[,3]*0.75
+
+#lets start from the beginning
+
+sim6 <- fastCalib(sim5@params)
+plotBiomass(sim6)
+
+```
+
+ this is not working
+ 
+ let's do without matching biomass first, any coexistence is welcome
+ 
+```{r}
+params_steady6 <- steady(sim5@params, tol = 0.001)
+sim6 <- project(params_steady6, t_max = 500)
+plotBiomass(sim6)
+```
+
+species are declining, no convergence is found
+
+```{r}
+plotDiet2(sim6)
+plotGrowthCurves(sim6, species_panel = T)
+```
+
+somehow it looks like species feed more on C.rhi even after I scaled down the column in the interaction matrix to reduce predation pressure on them
+
+
+```{r}
+plotPredMort(sim6)
+
+```
+ 
+Reasonable?
+
+Saving it as intermediate step
+
+```{r, eval = F}
+
+saveRDS(sim6, file = "params/params1.RDS")
+sim6 <- readRDS("params/params1.RDS")
+
+```
+
+
+
+Let's try a wide range of rmax
+
+```{r}
+
+sim7 <- fastOptim(sim6@params)
+plotBiomass(sim7)
+```
+
+
+back to the beginning, C rhi is still going extinct, but with another species now
+
+
+```{r}
+sim6@params@species_params$beta
+```
+
+Default mizer beta are too low probably
+
+```{r}
+
+sim7 <- sim6
+
+sim7@params@species_params$beta[3:9] <- 100
+
+sim7 <- fastCalib(sim7@params)
+
+plotBiomass(sim7)
+```
+
+Says there is convergence but everything collapses.
+
+```{r}
+plotDiet2(sim7)
+
+```
+
+Diets are not too bad even with the increase in beta 
+
+Rmax values have been reset by the matchBiomass function, let's recalculate them
+
+
+```{r}
+
+sim7@params@species_params$R_max <- sim6@params@species_params$R_max
+
+sim8 <- fastOptim(sim7@params)
+```
+
+
+```{r}
+
+plotBiomass(sim8)
+```
+
+Still not stable, let's try to calibrate again
+
+```{r}
+
+sim9 <- fastCalib(sim8@params)
+plotBiomass(sim9)
+
+```
+
+Matching the biomass always put Rmax to inf, what does that mean? They don't feed enough?
+
+
+```{r}
+
+plotBiomassObservedVsModel(sim9@params)
+
+```
+
+
+What if I reset Rmax with the default behavior
+
+
+```{r}
+
+sim9@params@species_params$R_max <- resource_params(sim9@params)$kappa * species_params(sim9@params)$w_inf^-1
+
+sim9 <- project(sim9@params, t_max = 3000)
+
+plotBiomass(sim9)
+
+```
+
+It does seem stable now, what about the biomass?
+
+Saving that one in any cases
+
+```{r, eval = F}
+
+saveRDS(sim9, file = "params/params2.RDS")
+sim9 <- readRDS("params/params2.RDS")
+
+```
+
+
+
+```{r}
+plotBiomassObservedVsModel(sim9)
+```
+
+meh
+
+
+```{r}
+
+sim10 <- fastCalib(sim9@params)
+plotBiomass(sim10)
+
+```
+
+meh
+
+Can't have coexistence and right biomass so what's wrong? parameters?
+
+
+Let's keep sim9 for now
+
+```{r}
+
+plotCalibration(sim9)
+plotDiet2(sim9)
+plotGrowthCurves(sim9, species_panel = T)
+plotPredMort(sim9)
+
+# let's work on these params
+
+params <- sim9@params
+
+
+```
+
+Now let's calibrate it to the fishing time series following mizerHowTo3
+
+There is only one type of gear, trawls, which catches everything (but mostly toothfish)
+
+```{r}
+load("size_spec_inputs.RData")
+
+plot_dat <- rsts_trends[,-2]
+plot_dat <- reshape2::melt(plot_dat, "Year")
+plot_dat$Year <- as.numeric(plot_dat$Year)
+
+ggplot(plot_dat) +
+  geom_line(aes(x = Year, y = value, color = variable)) +
+  scale_y_continuous(trans = "log10")
+```
+
+
+How to estimate a catchability value per species from this?
+
+If we assume that biomass caught is effort * catchability * pristine biomass and I know the biomass caught and the effort, I'll guess the catchability. It means I need to use the unfished biomass from sim9 though, which I know is not properly calibrated, but no choice for now.
+
+I can do that per year and estimate and then get an averaged catchability
+
+```{r}
+
+# unfished biomass
+biom0 <- getBiomass(sim9)[dim(sim9@n)[1],] # quite annoying that D.ele doesn't have the highest biomass ;(
+
+biomF <- rsts_trends
+
+catchSim <- data.frame("year" = rsts_trends$Year)
+for(icol in 3:11){
+
+catchSp <- biomF[,icol] / (biomF$Effort * biom0[c(icol-2)])
+catchSim <- cbind(catchSim,catchSp)
+}
+```
+
+
+Let's do an average catchability
+
+
+```{r}
+
+catchabilityAvg <- apply(catchSim[,-1],2,mean)
+
+catchArray <- matrix(catchabilityAvg, nrow = 1, dimnames = list("gear" = "knife_edge_gear", "sp" = params@species_params$species))
+
+mizer::catchability(params) <- catchArray
+# line above updates catchability slot but not gear nor species params slot
+
+params <- setParams(params) # that one doesn't either. why so complicated !!!
+
+params@species_params$catchability <- catchabilityAvg
+
+params <- setParams(params)
+
+params <- setFishing(params, catchability = catchArray)
+
+```
+
+Can't set up the fucking catchability
+
+And I'm looking at the survey anyway, which I just used to calibrate the biomass so not sure if useful or not...
+
+
+Now using longlines fisheries
+
+```{r}
+plot_dat <- reshape2::melt(ll_trends, "Year")
+
+ggplot(plot_dat, aes(x = Year, y = value)) +
+  geom_point() +
+  facet_wrap(~variable, nrow = 2, scales = "free")
+```
+
+
+
+Let's do the same as above but with toothfish only
+
+Average catchability
+
+```{r}
+
+# unfished biomass
+biom0 <- getBiomass(sim9)[dim(sim9@n)[1],] # quite annoying that D.ele doesn't have the highest biomass ;(
+
+biomF <- ll_trends
+
+biomF$CatchT <- biomF$CatchT * 1e6 # converting tonnes to g
+
+biomF$biom0 <- biom0[1]
+
+```
+
+Not even gonna try, the catch is way higher than what there actually is...
+
+Need a proper calibration first
+
+
+```{r}
+
+plotBiomassObservedVsModel(sim9)
+
+```
+
+I need to look at predation, I feel that's where the problem is. So interaction matrix, beta and kappa
+
+```{r}
+
+sim10 <- sim9 
+
+
+params <- calibrateBiomass(sim10@params) 
+params <- steady(params, tol = 0.001)
+sim <- project(params, t_max = 500)
+plotBiomass(sim)
+plotDiet2(sim)
+
+plotBiomassObservedVsModel(sim)
+
+```
+
+Doing this little test shows that the function matchbiomass is a pain as it removes rmax and break the ecosystem. Steady is also bullshiting as it says one species needs erepro >1 and doesn't get steady but it actually does. punk.
+However, D.ele is still too low
+
+Biomass for the survey is in fucking kilos and I have grams ahahahahahhahahahahahahahahahaha
+Maybe it will change something
+
+
+```{r}
+sim9@params@species_params$biomass_observed <- sim9@params@species_params$biomass_observed *1000
+```
+
+
+```{r}
+
+sim10 <- fastCalib(sim9@params)
+
+plotBiomass(sim10)
+plotBiomassObservedVsModel(sim10)
+plotDiet2(sim10)
+plotSpectra(sim10)
+plotGrowthCurves(sim10,species_panel = T)
+```
+
+Not much change except that kappa is higher now and the diets are more centered on plankton
+But know I should be able to catch with long lines
+
+
+```{r}
+
+# unfished biomass
+biom0 <- getBiomass(sim10)[dim(sim10@n)[1],] # quite annoying that D.ele doesn't have the highest biomass ;(
+
+biomF <- ll_trends
+
+biomF$CatchT <- biomF$CatchT * 1e6 # converting tonnes to g
+
+biomF$biom0 <- biom0[1]
+
+```
+
+Catches are still too high
+How do I increase my biomass without collapsing the ecosystem?
+Need a plot comparing reproduction with and without rmax to see which species are impacted the most
+
+I need to get biomass high enough meaning better Rmax
+
+
+
+```{r}
+
+
+sim11 <- fastOptim(sim10@params)
+plotBiomass(sim11)
+plotBiomassObservedVsModel(sim11)
+```
+
+Looks good, could try to fix this skate dying
+
+```{r}
+
+saveRDS(sim11, file = "params/params3.RDS")
+sim11 <- readRDS("params/params3.RDS")
+
+```
+
+So what's wrong with you Bmur?
+
+```{r}
+plotGrowthCurves(sim11, species_panel = T)
+plotDiet2(sim11)
+plotPredMort(sim11)
+
+```
+
+Do you get eaten to much by meanie Dele?
+
+```{r}
+sim11@params@interaction[1,9] <- .5
+params11 <- setParams(sim11@params)
+sim12 <- project(params11, t_max = 500)
+plotBiomass(sim12)
+
+```
+
+Bam EZ
+
+```{r}
+
+plotBiomassObservedVsModel(sim12)
+
+```
+
+A bit too much maybe ^^'
+
+
+```{r}
+sim11@params@interaction[1,9] <- .85
+params11 <- setParams(sim11@params)
+sim12 <- project(params11, t_max = 500)
+plotBiomass(sim12)
+plotBiomassObservedVsModel(sim12)
+
+```
+
+This seem to work great! Maybe the best way would be to tweak the interaction matrix to match the biomass?
+How do I do that?
+
+Just noticed something, the getError function I'm using uses catch as default argument, and therefore calculate Rmax based on the yield but I don't have any fisheries enabled.......... Corrected now
+
+
+Let's try that here. First need a geterror function using a column of the interaction matrix
+
+
+```{r}
+
+vary <- rep(.5,9)
+species <- params@species_params$species[1]
+
+getError2 <- function(vary, params, species, dat, data_type = "catch", tol = 0.001, 
+    timetorun = 10)
+{
+  interaction <- params@interaction
+  interaction[species,] <- vary
+  
+  params <- setInteraction(params,interaction)
+
+    params <- projectToSteady(params, distance_func = distanceSSLogN, 
+        tol = tol, t_max = 200, return_sim = F)
+    
+    sim <- project(params, t_max = timetorun, progress_bar = F)
+    
+    if (data_type == "SSB") {
+        output <- getSSB(sim)[timetorun, ]
+    }
+    if (data_type == "catch") {
+        output <- getYield(sim)[timetorun, ]/1e+06
+    }
+    pred <- log(output)
+    dat <- log(dat)
+    discrep <- pred - dat
+    discrep <- (sum(discrep^2))
+    return(discrep)
+}
+
+
+fastOptim2 <- function(params)
+{
+
+# create set of params for the optimisation process
+params_optim <- params
+vary <-  rep(.5,9) # variable to explore
+species = "D.ele"
+params_optim<-setParams(params_optim)
+# set up workers
+noCores <- parallel::detectCores() - 1 # keep some spare core
+cl <- parallel::makeCluster(noCores, setup_timeout = 0.5)
+setDefaultCluster(cl = cl)
+clusterExport(cl, varlist = "cl",envir=environment())
+clusterEvalQ(cl, {
+  library(mizerExperimental)
+  library(optimParallel)
+})
+optim_result <- optimParallel::optimParallel(par=vary,getError2,params=params_optim, species = species, dat = params_optim@species_params$biomass_observed, data_type = "SSB", method ="L-BFGS-B", lower=c(rep(0,dim(params_optim@species_params)[1])), upper= c(rep(1,dim(params_optim@species_params)[1])),
+                                             parallel=list(loginfo=TRUE, forward=TRUE))
+stopCluster(cl)
+
+
+  interaction <- params_optim@interaction
+  interaction[species,] <- optim_results$par
+  params_optim <- setInteraction(params_optim,interaction)
+
+sim_optim <- project(params_optim, t_max = 2000)
+
+return(sim_optim)
+}
+
+
+
+```
+
+
+YOLO
+
+
+```{r}
+
+sim13 <- fastOptim2(sim12@params)
+
+```
+
+weird that it settles somewhere where it doesn't coexist. but now at least D.ele has the highest biomass
+
+
+```{r}
+
+sim13@params@interaction
+plotPredMort(sim13)
+plotDiet2(sim13)
+plotBiomassObservedVsModel(sim13)
+
+```
+
+```{r}
+
+saveRDS(sim13, file = "params/params4.RDS")
+sim13 <- readRDS("params/params4.RDS")
+
+```
+
+
+Let's tweak the interaction manually
+
+
+```{r}
+
+interaction <- sim13@params@interaction
+interaction[1,8] <- .9 * interaction[1,8]
+interaction[1,9] <- .8 * interaction[1,9]
+params <- setInteraction(sim13@params,interaction)
+
+sim14 <- project(params, t_max = 2000)
+
+```
+
+
+```{r}
+
+plotBiomass(sim14)
+plotBiomassObservedVsModel(sim14)
+
+```
+
+Not bad at all :D
+
+
+```{r}
+saveRDS(sim14, file = "params/params5.RDS")
+sim14 <- readRDS("params/params5.RDS")
+```
+
+
+
+Looking at the trawl vs longlines
+
+```{r}
+
+trawl <- rsts_trends[,1:3]
+lline <- ll_trends[1:14,]
+
+plot_dat <- data.frame("Year" = trawl[,1], "Trawl" = trawl[,3]/1000, "Longline" = lline[,3])
+colnames(plot_dat)[2:3] <- c("Trawl","Longline")
+
+ggplot(plot_dat) +
+  geom_point(aes(x = Year, y = Trawl), color = "black") +
+  geom_point(aes(x = Year, y = Longline), color = "red")
+
+
+```
+
+The biomass caught by the longlines is way higher than what's reported by the survey. It's because they are not in the same area and there is way more stuff, or at least toothfish in the depth. So whatever calibration I'm doing with the survey is not really useful I guess...
+
+Maybe I should try to calibrate with the longlines only and the rest of the ecosystem will follow? And somehow keep the same proportion of other species, but with the biomass of the longlines? :/
+
+Restarting the calibration from scratch, but using only toothfish biomass. I need a catchability to work from fisheries right? So it's not gonna work.
+
+Can I assume that the deep ecosystem is just a big version of the shallows? Guessing that's the easiest to do at the moment. So the survey gives me the proportions of biomasses and I can scale it up so that the long lines do not fish everything
+
+At the moment, params5 has ~5e10 g of D.elem so 5e4 Tonnes. Longlines catch up to 4e3 Tonnes so maybe that's enough
+
+But before that, I converted twice kilos to grams so params5 has 1000 times more biomass than what it's supposed to have ....
+
+
+```{r}
+
+sim14@params@species_params$biomass_observed <- sim14@params@species_params$biomass_observed / 1000
+
+sim15 <- fastCalib(sim14@params)
+
+plotBiomass(sim15)
+plotBiomassObservedVsModel(sim15)
+plotDiet2(sim15)
+plotSpectra(sim15)
+plotGrowthCurves(sim15,species_panel = T)
+
+```
+
+sim15 doesn't work, going to try to just scale down the model. What a mess
+
+
+
+```{r}
+
+params15 <- mizer::scaleModel(sim14@params,factor = 1/1000)
+
+sim15 <- project(params15, t_max = 500)
+
+plotBiomass(sim15)
+plotBiomassObservedVsModel(sim15)
+
+```
+
+Good
+Now the ecosystem is truly calibrated to the survey. Let's fish it.
+
+First thing, there is not enough D.ele to fish
+
+If I knew the catchability of the long lines, I could deduce how much D.ele there is in the depth, but I don't. I just know the quantity know. Don't even know if the stock is collapsing or not.
+
+Ok, let's assume, since the survey is relatively stable from 2004 to 2016, that the toothfish stock is stable in the depth too. So the long lines should not affect to much the stock of D.ele until 2016. Could try to scale up the ecosystem until fisheries do not collapse everything. Then we can see the effect of increasing the effort so much post 2016.
+
+Since I do not have catchability, I'll assume it's 1.
+
+Let's set up longlines for toothfish only for now. Will add bycatch later.
+The graphs sent by Nicole shows that the smallest toothfish caught is 500mm long. However I'm simulation knife edge so I'm going to take 600mm minimum as there are not many 500mm toothfish caught. Best would be to do a sigmoid but I do not have the graph's data.
+
+For toothfish, 60cm is 0.00603 * 60 ^ 3.18 = 2721.688g. Going to set up the min at that. It is way lower than w_mat though which is 95cm. If this is true, the longlines fish toothfish before they are mature. What a bunch of idiots.
+
+
+```{r}
+params <- sim16@params
+
+gear_ll<-data.frame(species = params@species_params$species,
+               gear = "longline",
+               sel_func = "knife_edge",
+               knife_edge_size = 2722 ,
+               catchability = c(1,rep(0,8)),
+               initial_effort = 1)
+
+gear_params(params) <- gear_ll
+
+```
+
+
+
+
+```{r}
+
+sim16 <- project(params, t_max = 500, effort = 0)
+plotSpectra(sim16, power = 2)
+plotBiomass(sim16)
+plotlySpectra(sim16, power = 2)
+plotGrowthCurves(sim16, species = "D.ele")
+```
+
+```{r}
+saveRDS(sim16, file = "params/params6.RDS")
+sim16 <- readRDS("params/params6.RDS")
+
+```
+
+
+
+```{r}
+
+sim17 <- project(sim16@params, t_max = 500, effort = 1)
+plotBiomass(sim17)
+
+```
+
+Toothfish doesn't like the fisheries
+
+
+```{r}
+
+plotFMort(sim17)
+plotPredMort(sim17)
+plotSpectra(sim17)
+```
+
+Toothfish grow big and has a slow growth and yet they fish just small young individuals? WTF
+
+Issue: how can the slow growth counterbalance the fisheries mortality?
+
+```{r}
+
+plot_dat <- plotEnergyBudget(sim16, species = "D.ele", return_data = T)
+params <- sim16@params
+ params <- setColours(params, list(Growth = "#F8766D", 
+        Income = "#7CAE00", `Metabolic loss` = "#00BFCFC4", 
+        Reproduction = "#C77CFF"))
+xtrans <- "log10"
+ 
+pl <- plotDataFrame(plot_dat[[1]], params, style = "area", 
+        xlab = "Size [g]", ylab = "Rate [g/year]", 
+        xtrans = xtrans, wrap_var = "Species", wrap_scale = "free")
+
+    pl <- pl + geom_vline(data = plot_dat[[2]], aes(xintercept = w_mat, 
+        group = Species), linetype = "dotted") + 
+      geom_vline(data = plot_dat[[2]], 
+        aes(xintercept = w_inf, group = Species), linetype = "dotted") + 
+        geom_text(data = plot_dat[[2]], aes(x = w_mat, y = y_coord * 
+            0.2, label = "\nMaturity"), angle = 90) + 
+      geom_text(data = plot_dat[[2]], 
+        aes(x = w_inf, y = y_coord * 0.2, label = "\nMaximum"), 
+        angle = 90)+
+      geom_vline(xintercept = 2722, color = "red")
+
+
+```
+
+
+Above graph shows that in this fisheries conditions, toothfish cannot reproduce. But the modelled growth is already slightly faster than the vonB one...
+
+
+In the meantime let's recreate the longlines at a km2 scale
+
+```{r}
+
+ll_area_yr <- read_csv("ll_area_yr.csv")
+
+ll_trends <- cbind(ll_trends,ll_area_yr[-dim(ll_area_yr)[1],3])
+
+ll_km2 <- data.frame("year" = ll_trends$Year, "effort" = ll_trends$Effort/ll_trends$area_km,
+                     "catchT" = ll_trends$CatchT / ll_trends$area_km)
+
+ll_avg <- mean(ll_km2$catchT) * 1e6 # in grams
+```
+
+what does it look like?
+
+
+```{r}
+
+ggplot(ll_km2) +
+  geom_line(aes(x = year, y = catchT), color = "red") +
+  geom_line(aes(x = year, y = effort/1000), color = "black")
+
+```
+
+
+Redoing the fisheries and matching to time series
+
+
+```{r}
+
+params <- sim16@params
+
+params@species_params$yield_observed <- c(ll_avg,rep(0,8))
+
+gear_ll<-data.frame(species = params@species_params$species,
+               gear = "longline",
+               sel_func = "knife_edge",
+               knife_edge_size = 2722 ,
+               catchability = c(0.00001,rep(0,8)),
+               initial_effort = 1)
+
+gear_params(params) <- gear_ll
+initial_effort(params) <- 1 # somehow doesn't work with gear_params
+
+sim16 <- project(params, t_max = 500)
+plotBiomass(sim16)
+plotFMort(sim16)
+
+plotYieldObservedVsModel(sim16, species = "D.ele")
+```
+
+
+
+```{r}
+
+params17 <- sim16@params
+params17@initial_n <- sim16@n[dim(sim16@n)[1],,]
+params17@initial_n_pp <- sim16@n_pp[dim(sim16@n_pp)[1],]
+
+params17 <- setParams(params17)
+
+sim17 <- project(params17)
+
+plotBiomass(sim17)
+
+
+
+params <- sim17@params
+
+gear_ll<-data.frame(species = params@species_params$species,
+               gear = "longline",
+               sel_func = "knife_edge",
+               knife_edge_size = 2722 ,
+               catchability = c(1e-5,rep(0,8)),
+               initial_effort = mean(ll_km2$effort))
+
+gear_params(params) <- gear_ll
+
+sim18 <- project(params, effort = params@gear_params$initial_effort[1], t_max = 200)
+
+plotBiomass(sim18)
+
+plotFMort(sim18)
+
+params@initial_effort
+
+
+
+```
+
+if does not work do the optim on time averaged first
+
+
+At least it works, nevertheless the low catchability
+
+Let's run it through optim varying erepro, rmax and catchability
+
+
+```{r}
+tic()
+dat <- ll_km2
+
+  effort <-array(dat$effort, dim = c(length(dat$effort),1), 
+                 dimnames = list("time" = dat$year, "gear" = params@gear_params$gear[1]))
+
+# create set of params for the optimisation process
+params_optim <- sim17@params
+vary<-c(log10(params_optim@species_params$R_max),
+        params_optim@species_params$erepro,
+        params_optim@gear_params$catchability[1])
+params_optim<-setParams(params_optim)
+# set up workers
+noCores <- parallel::detectCores() - 1 # keep some spare core
+cl <- parallel::makeCluster(noCores, setup_timeout = 0.5)
+setDefaultCluster(cl = cl)
+clusterExport(cl, varlist = "cl",envir=environment())
+clusterEvalQ(cl, {
+  library(mizerExperimental)
+  library(optimParallel)
+})
+optim_result <- optimParallel::optimParallel(par=vary,getErrorTime,params=params_optim, dat = ll_km2, effort = effort,
+                                             method   ="L-BFGS-B", 
+                                             lower=c(rep(3,9),rep(1e-7,9),0.000001),upper= c(rep(15,9),rep(1,9),1),
+                                             parallel=list(loginfo=TRUE, forward=TRUE))
+stopCluster(cl)
+
+toc()
+saveRDS(optim_result, file="params/optim_result_timeseries.RDS")
+optim_result <- readRDS("params/optim_result_timeseries.RDS")
+#put these new vals intospecies_params and go back to the top of this page to re-check the calibration 
+species_params(params_optim)$R_max<-10^optim_result$par[1:9]
+species_params(params_optim)$erepro<-optim_result$par[10:18]
+gear_params(params_optim)$catchability[1] <-optim_result$par[19]
+#re-run time-varying effort model tthough time with new erepro
+sim_optim <- project(params_optim, effort = effort)
+
+
+
+
+```
+
+
+```{r}
+plotBiomass(sim_optim)
+plotFMort(sim_optim)
+plotYield(sim_optim)
+```
+
+This is not working
+
+
+
+
+## Adding temperature to mizer
+
+
+The temperature dependence was on:
+
+- intake
+
+- metabolism
+
+- background mortality
+
+Applied by changing:
+
+- search volume
+
+- intake max
+
+- metabolism
+
+- mu_b
+
+Using activation and deactivation periods and a temperature reference and temperature preferred
+
+So lots of combinations possible here. For the sake of simplicity I'm going to start with the same setup as my PhD: both activation and deactivation phases (important for heatwaves) but only on food intake (search volumme and intake max impacted)
+
+This means I need to edit
+
+- mizerEncounter for search_vol
+
+- mizerFeedingLevel for intake_max
+
+- mizerPredRate for search_vol
+
+### Temperature functions
+
+Code is saved in temperatureFuncs.R
+
+Assumption: PredRate uses feeding level which uses encounter where search volume is multiplied by the scalar. The same search volume is also multiplied by the scalar in predRate. Is it ok? Guessing yes since predrate already has search volume squared in its calculation so it should be scalar squared too.
+
+
+Testing the behavior of the function
+
+
+```{r}
+
+params <- newTraitParams(no_sp = 4)
+
+params@species_params$Ea <- 0.63
+params@species_params$c_a <- 0
+params@species_params$Ed <- 6.3
+params@species_params$c_d <- 0
+params@species_params$t_d <- 25
+params@species_params$t_ref <- 10
+
+other_params(params)$temperature <- 1:30
+
+params <- setParams(params)
+
+params@other_params$other$temperature
+
+temperature <- c(25)#,26)
+
+scalar <- tempFun(params@w, temperature = temperature,
+                  t_d = params@species_params$t_d,
+                  t_ref = params@species_params$t_ref,
+                  Ea = params@species_params$Ea,
+                  c_a = params@species_params$c_a,
+                  Ed = params@species_params$Ed,
+                  c_d = params@species_params$c_d)
+                  
+scalar <- t(drop(scalar))
+
+
+params@search_vol * t(scalar)
+
+
+
+#####
+
+
+w <- params@w
+
+y = tempFun(w = w, temperature = temperature, Ea = Ea, t_ref = t_ref, Ed = Ed)
+
+plot_dat <- data.frame("temperature" = temperature, "scalar" = y[1,])
+
+ggplot(plot_dat) +
+  geom_line(aes(x = temperature, y = scalar))
+
+y = tempFun(w = w, temperature = 15, Ea = Ea, t_ref = t_ref, Ed = Ed)
+
+```
+
+Happy
+
+
+test
+
+```{r}
+var <- NULL
+for(t in 1:30)
+{
+varTemp <- mizerEncounterTemp(params, n = params@initial_n, n_pp = params@initial_n_pp, n_other = params@initial_n_other, t = t)[1,50]
+var <- c(var,varTemp)
+}
+
+plot_dat <- data.frame("time" = 1:30, "value" = var)
+
+var2 <- mizerEncounter(params, n = params@initial_n, n_pp = params@initial_n_pp, n_other = params@initial_n_other, t = t)[1,50]
+
+ggplot(plot_dat) +
+  geom_point(aes(x = time, y = value)) +
+  geom_hline(yintercept = var2) # tref is 10
+
+
+encounter <- mizerEncounterTemp(params, n = params@initial_n, n_pp = params@initial_n_pp, n_other = params@initial_n_other, t = 15)
+
+feeding_level <- mizerFeedingLevelTemp(params, n = params@initial_n, 
+                                       n_pp = params@initial_n_pp, n_other = params@initial_n_other, 
+                                       encounter = encounter, t = 15)
+
+predRate <- mizerPredRateTemp(params, n = params@initial_n, 
+                                       n_pp = params@initial_n_pp, n_other = params@initial_n_other, 
+                                       feeding_level = feeding_level, t = 15)
+
+```
+
+
+Now writing a proper setup to enable temperature in mizer
+
+
+```{r}
+source("temperatureFuncs.R")
+# a function that:
+# adds the temperature parameters to the params object
+# replace default rates in mizer with temperature mizer
+# add temperature vector to param object
+
+#' @paramTemp a dataframe with the temperature parameters to add to the mizer object 
+
+mizerTemp <- function(temp_vec, params, paramTemp = NULL){
+  
+if(!is.null(paramTemp)){
+params@species_params$Ea <- paramTemp$Ea
+params@species_params$c_a <- paramTemp$c_a
+params@species_params$Ed <- paramTemp$Ed
+params@species_params$c_d <- paramTemp$c_d
+params@species_params$t_d <- paramTemp$t_d
+params@species_params$t_ref <- paramTemp$t_ref
+}
+
+other_params(params)$temperature <- temp_vec
+
+params <- setRateFunction(params, "Encounter", "mizerEncounterTemp")
+params <- setRateFunction(params, "FeedingLevel", "mizerFeedingLevelTemp")
+params <- setRateFunction(params, "PredRate", "mizerPredRateTemp")
+
+params <- setParams(params)
+  
+  return(params)
+}
+
+
+```
+
+
+test
+
+
+```{r}
+
+params <- newTraitParams(no_sp = 4)
+sim <- project(params)
+plotBiomass(sim)
+
+temperatureParams <- data.frame("Ea" = 0.63, "c_a" = 0, "Ed" = 6.3, "c_d" = 0,
+                                "t_d" = 25, "t_ref" = 10)
+
+temperature <- seq(10,30,length.out = 200)
+
+paramsT <- mizerTemp(temp_vec = temperature, paramTemp = temperatureParams, params = params)
+
+simT <- project(paramsT, t_max = length(temperature))
+
+plotBiomass(simT)
+```
+
+
+
+Working :)
+
+
+toothfish
+
+Preferred temperature (Ref. 115969): 1.8 - 8.8, mean 4.5 °C (based on 1109 cells).
+
+
