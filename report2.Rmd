@@ -1,0 +1,996 @@
+---
+title: toothfish project
+author: RF
+output:
+  html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r}
+library(tidyverse)
+library(mizer)
+library(mizerExperimental)
+library(mizerHowTo)
+library(parallel)
+library(tictoc)
+load("size_spec_inputs.RData")
+```
+
+### Helpful functions
+
+
+```{r}
+# function for calibration of Rmax
+
+fastOptim <- function(params)
+{
+
+# create set of params for the optimisation process
+params_optim <- params
+vary <-  log10(params_optim@species_params$R_max) # variable to explore
+params_optim<-setParams(params_optim)
+# set up workers
+noCores <- parallel::detectCores() - 1 # keep some spare core
+cl <- parallel::makeCluster(noCores, setup_timeout = 0.5)
+setDefaultCluster(cl = cl)
+clusterExport(cl, varlist = "cl",envir=environment())
+clusterEvalQ(cl, {
+  library(mizerExperimental)
+  library(optimParallel)
+})
+optim_result <- optimParallel::optimParallel(par=vary,getError,params=params_optim, dat = params_optim@species_params$biomass_observed, data_type = "SSB", method   ="L-BFGS-B", lower=c(rep(3,dim(params_optim@species_params)[1])), upper= c(rep(15,dim(params_optim@species_params)[1])),
+                                             parallel=list(loginfo=TRUE, forward=TRUE))
+stopCluster(cl)
+
+params_optim@species_params$R_max <- 10^optim_result$par 
+
+sim_optim <- project(params_optim, t_max = 2000)
+
+return(sim_optim)
+}
+```
+
+
+```{r}
+# function running tuneParams function in a row for a quick start to a calibration
+fastCalib <- function(params, match = F)
+{
+params <- calibrateBiomass(params) # changes kappa and rmax
+if(match) params <- matchBiomasses(params) # set rmax to inf and adjust erepro
+params <- steady(params, tol = 0.001)
+sim <- project(params, t_max = 1000)
+return(sim)
+}
+
+```
+
+
+```{r}
+# removing effort = 1 so always using intial effort and removing /1e6 so everything is in grams
+
+getError2 <- function (vary, params, dat, data_type = "catch", tol = 0.1, 
+    timetorun = 10) 
+{
+    params@species_params$R_max[] <- 10^vary[1:length(params@species_params$R_max)]
+    params <- setParams(params)
+    params <- projectToSteady(params, distance_func = distanceSSLogN, 
+        tol = tol, t_max = 200, return_sim = F)
+    sim <- project(params, t_max = timetorun, progress_bar = F)
+    if (data_type == "SSB") {
+        output <- getSSB(sim)[timetorun, ]
+    }
+    if (data_type == "catch") {
+        output <- getYield(sim)[timetorun, ]
+    }
+    pred <- log(output)
+    dat <- log(dat)
+    discrep <- pred - dat
+    discrep <- (sum(discrep^2))
+    return(discrep)
+}
+
+
+```
+
+
+```{r}
+
+getErrorTime <- function(vary,params,dat,effort,env=state,tol = 0.1) {
+  
+  params@species_params$R_max[1:9]<-10^vary[1:9]
+  params@species_params$erepro[1:9]<-vary[10:18]
+  params@gear_params$catchability[1]<-vary[19]
+
+  
+  params <- setParams(params)
+  # run to steady state and update params
+  # env$params<- projectToSteady(env$params, distance_func = distanceSSLogN,
+  #                 tol = tol, t_max = 200,return_sim = F)
+  
+  params_steady<- projectToSteady(params, distance_func = distanceSSLogN,
+                                  tol = tol, t_max = 200,return_sim = F)
+  
+  #run time-varying effort model tthough time with new erepro
+  
+  simt <- project(params_steady, effort = effort, initial_n =  params_steady@initial_n, initial_n_pp = params_steady@initial_n_pp)
+  
+  # get biomass through time
+  biomass <- sweep(simt@n, 3, simt@params@w * simt@params@dw, "*")
+  
+  #get yield through time from model:
+  
+  f_gear<-getFMortGear(params,effort)
+  yield_species_gear <- apply(sweep(f_gear, c(1, 3, 4), biomass, "*"),
+                              c(1, 2, 3), sum)
+  # yield_species_gear
+  
+  yield_species <-apply(yield_species_gear, c(1, 3), sum)
+  
+  yield_frame <- melt(yield_species)
+  
+  # leave out spin up and change units to tonnes    
+  # y<-yield_frame[yield_frame$time >= 1947,]
+  
+  # disregard zeroes - these were NAs only filled in to run the model   
+  
+  obs<-dat$catchT
+  pred<-yield_frame$value[1:18] # only selecting D.ele for now
+  
+  # sum of squared errors, could use  log-scale of predictions and data (could change this or use other error or likelihood options)
+  
+  error <- sum((log(pred) - log(obs))^2,na.rm=T)
+  
+  # can use a strong penalty on the error to ensure we reach a minimum of 10% of the data (biomass or catch) for each species
+  # if(any(pred < 0.1*dat)) discrep <- discrep + 1e10
+  
+  return(error)
+  
+}
+
+
+```
+
+
+```{r}
+
+getErrorCustomYield <- function(vary,params,dat,effort,env=state,tol = 0.1) {
+  
+  params@species_params$R_max[1:9]<-10^vary[1:9]
+  params@species_params$erepro[1:9]<-vary[10:18]
+  params@gear_params$catchability[1]<-vary[19]
+
+  
+  params <- setParams(params)
+  # run to steady state and update params
+  # env$params<- projectToSteady(env$params, distance_func = distanceSSLogN,
+  #                 tol = tol, t_max = 200,return_sim = F)
+  
+  params_steady<- projectToSteady(params, distance_func = distanceSSLogN,
+                                  tol = tol, t_max = 200,return_sim = F)
+  
+  #run time-varying effort model tthough time with new erepro
+  
+  simt <- project(params_steady, effort = effort, initial_n =  params_steady@initial_n, initial_n_pp = params_steady@initial_n_pp)
+  
+  # get biomass through time
+  biomass <- sweep(simt@n, 3, simt@params@w * simt@params@dw, "*")
+  # biomass <- biomass[1:13,,]
+  
+  #get yield through time from model:
+  
+  f_gear<-getFMortGear(params,effort)
+  # f_gear <- f_gear[1:13,,,,drop=F]
+  yield_species_gear <- apply(sweep(f_gear, c(1, 3, 4), biomass, "*"),
+                              c(1, 2, 3), sum)
+  # yield_species_gear
+  
+  yield_species <-apply(yield_species_gear, c(1, 3), sum)
+  
+  yield_frame <- melt(yield_species)
+  
+  # leave out spin up and change units to tonnes    
+  # y<-yield_frame[yield_frame$time >= 1947,]
+  
+  # disregard zeroes - these were NAs only filled in to run the model   
+  
+  obs<-dat$catchT
+  pred<-yield_frame$value[1:18] # only selecting D.ele for now
+  
+  # sum of squared errors, could use  log-scale of predictions and data (could change this or use other error or likelihood options)
+  
+  error <- sum((log(pred[1:13]) - log(obs[1:13]))^2,na.rm=T)
+  
+  # can use a strong penalty on the error to ensure we reach a minimum of 10% of the data (biomass or catch) for each species
+  # if(any(pred < 0.1*dat)) discrep <- discrep + 1e10
+  
+  return(error)
+  
+}
+
+
+```
+
+### Set of functions using size selectivity of the data
+
+```{r}
+
+# this function adds a lower boundary to selected size
+
+plotBiomassObservedVsModelCustom <- function (object, species = NULL, ratio = FALSE, log_scale = TRUE, 
+    return_data = FALSE, labels = TRUE, show_unobserved = FALSE) 
+{
+    if (is(object, "MizerSim")) {
+        params = object@params
+        n <- finalN(object)
+    }
+    else if (is(object, "MizerParams")) {
+        params = object
+        n <- initialN(params)
+    }
+    else {
+        stop("You have not provided a valid mizerSim or mizerParams object.")
+    }
+    sp_params <- params@species_params
+    species = valid_species_arg(object, species)
+    if (length(species) == 0) 
+        stop("No species selected, please fix.")
+    row_select = match(species, sp_params$species)
+    if (!"biomass_observed" %in% names(sp_params)) {
+        stop("You have not provided values for the column 'biomass_observed' ", 
+            "in the mizerParams/mizerSim object.")
+    }
+    else if (!is.numeric(sp_params$biomass_observed)) {
+        stop("The column 'biomass_observed' in the mizerParams/mizerSim object", 
+            " is not numeric, please fix.")
+    }
+    else {
+        biomass_observed = sp_params$biomass_observed
+    }
+    
+    cutoffLow <- sp_params$biomass_cutoffLow[row_select]
+    if (is.null(cutoffLow)) {
+        cutoffLow = rep(0, length(species))
+    }
+    else if (!is.numeric(cutoffLow)) {
+        stop("params@species_params$biomass_cutoffLow is not numeric, \",\n                 \"please fix.")
+    }
+    cutoffLow[is.na(cutoffLow)] <- 0
+    
+    cutoffHigh <- sp_params$biomass_cutoffHigh[row_select]
+    if (is.null(cutoffHigh)) {
+        cutoffHigh = rep(0, length(species))
+    }
+    else if (!is.numeric(cutoffHigh)) {
+        stop("params@species_params$biomass_cutoffHigh is not numeric, \",\n                 \"please fix.")
+    }
+    cutoffHigh[is.na(cutoffHigh)] <- 0
+    
+    sim_biomass = rep(0, length(species))
+    for (j in 1:length(species)) {
+        sim_biomass[j] = sum((n[row_select[j], ] * params@w * 
+            params@dw)[params@w >= cutoffLow[j] & cutoffHigh[j] >= params@w])
+    }
+    dummy = data.frame(species = species, model = sim_biomass, 
+        observed = biomass_observed[row_select]) %>% mutate(species = factor(species, 
+        levels = species), is_observed = !is.na(observed) & observed > 
+        0, observed = case_when(is_observed ~ observed, !is_observed ~ 
+        model), ratio = model/observed)
+    if (sum(dummy$is_observed) == 0) {
+        cat(paste("There are no observed biomasses to compare to model,", 
+            "only plotting model biomasses.", sep = "\n"))
+    }
+    if (!show_unobserved) {
+        dummy <- filter(dummy, is_observed)
+    }
+    if (return_data == TRUE) 
+        return(dummy)
+    tre <- round(sum(abs(1 - dummy$ratio)), digits = 3)
+    caption <- paste0("Total relative error = ", tre)
+    if (any(!dummy$is_observed)) {
+        caption <- paste(caption, "\n Open circles represent species without biomass observation.")
+    }
+    if (ratio == FALSE) {
+        gg <- ggplot(data = dummy, aes(x = observed, y = model, 
+            colour = species, shape = is_observed)) + geom_abline(aes(intercept = 0, 
+            slope = 1), colour = "purple", linetype = "dashed", 
+            size = 1.3) + geom_point(size = 3) + labs(y = "model biomass [g]") + 
+            coord_cartesian(ylim = range(dummy$model, dummy$observed))
+    }
+    else {
+        gg <- ggplot(data = dummy, aes(x = observed, y = ratio, 
+            colour = species, shape = is_observed)) + geom_hline(aes(yintercept = 1), 
+            linetype = "dashed", colour = "purple", 
+            size = 1.3) + geom_point(size = 3) + labs(y = "model biomass / observed biomass") + 
+            coord_cartesian(ylim = range(dummy$ratio))
+    }
+    gg <- gg + labs(x = "observed biomass [g]", caption = caption) + 
+        scale_colour_manual(values = getColours(params)[dummy$species]) + 
+        scale_shape_manual(values = c(`TRUE` = 19, `FALSE` = 1)) + 
+        guides(shape = "none")
+    if (log_scale == TRUE & ratio == FALSE) {
+        gg = gg + scale_x_log10() + scale_y_log10()
+    }
+    if (log_scale == TRUE & ratio == TRUE) {
+        gg = gg + scale_x_log10()
+    }
+    if (labels == TRUE) {
+        gg = gg + ggrepel::geom_label_repel(aes(label = species), 
+            box.padding = 0.35, point.padding = 0.5, segment.color = "grey50", 
+            show.legend = FALSE, max.overlaps = Inf, seed = 42)
+    }
+    gg
+}
+```
+
+
+```{r}
+
+# adapting cutoff here too
+
+calibrateBiomassCustom <- function (params) 
+{
+  if ((!("biomass_observed" %in% names(params@species_params))) || 
+      all(is.na(params@species_params$biomass_observed))) {
+    return(params)
+  }
+  no_sp <- nrow(params@species_params)
+  
+  cutoffLow <- params@species_params$biomass_cutoffLow
+  if (is.null(cutoffLow)) 
+    cutoffLow <- rep(0, no_sp)
+  cutoffLow[is.na(cutoffLow)] <- 0
+  
+  cutoffHigh <- params@species_params$biomass_cutoffHigh
+  if (is.null(cutoffHigh)) 
+    cutoffHigh <- rep(0, no_sp)
+  cutoffHigh[is.na(cutoffHigh)] <- 0
+  
+  observed <- params@species_params$biomass_observed
+  observed_total <- sum(observed, na.rm = TRUE)
+  sp_observed <- which(!is.na(observed))
+  model_total <- 0
+  for (sp_idx in sp_observed) {
+    model_total <- model_total + sum((params@initial_n[sp_idx, 
+    ] * params@w * params@dw)[params@w >= cutoffLow[sp_idx] & cutoffHigh[sp_idx] >= params@w])
+  }
+  scaleModel(params, factor = observed_total/model_total)
+}
+
+
+```
+
+```{r}
+
+# same as above
+
+matchBiomassCustom <- function (params, species = NULL) 
+{
+    if (!("biomass_observed" %in% names(params@species_params))) {
+        return(params)
+    }
+    species <- valid_species_arg(params, species = species, return.logical = TRUE) & 
+        !is.na(params@species_params$biomass_observed) & params@species_params$biomass_observed > 
+        0
+    for (sp in (1:nrow(params@species_params))[species]) {
+        cutoffLow <- params@species_params$biomass_cutoffLow[[sp]]
+        if (is.null(cutoffLow) || is.na(cutoffLow)) {
+            cutoffLow <- 0
+        }
+                    cutoffHigh <- params@species_params$biomass_cutoffHigh[[sp]]
+        if (is.null(cutoffHigh) || is.na(cutoffHigh)) {
+            cutoffHigh <- 0
+        }
+        
+        total <- sum((params@initial_n[sp, ] * params@w * params@dw)[params@w >= cutoffLow & cutoffHigh >= params@w])
+        factor <- params@species_params$biomass_observed[[sp]]/total
+        params@initial_n[sp, ] <- params@initial_n[sp, ] * factor
+    }
+    setBevertonHolt(params)
+}
+
+
+
+```
+
+
+```{r}
+getErrorCustom <- function(vary, params, dat, tol = 0.001, 
+    timetorun = 10)
+{
+  params@species_params$R_max[1:9]<-10^vary[1:9]
+  params@species_params$erepro[1:9]<-vary[10:18]
+  params@species_params$interaction_resource[1:9] <- vary[19:27]
+
+  params <- setParams(params)
+
+  interaction <- params@interaction
+  interaction[] <- matrix(vary[28:108],nrow = 9) # stop at 54 if looking only at 3 biggest species
+  
+  params <- setInteraction(params,interaction)
+
+    params <- projectToSteady(params, distance_func = distanceSSLogN, 
+        tol = tol, t_max = 200, return_sim = F)
+    
+    sim <- project(params, t_max = timetorun, progress_bar = F)
+    
+    sim_biomass = rep(0, length(params@species_params$species))
+    
+        cutoffLow <- params@species_params$biomass_cutoffLow
+    if (is.null(cutoffLow)) 
+        cutoffLow <- rep(0, no_sp)
+    cutoffLow[is.na(cutoffLow)] <- 0
+    
+        cutoffHigh <- params@species_params$biomass_cutoffHigh
+    if (is.null(cutoffHigh)) 
+        cutoffHigh <- rep(0, no_sp)
+    cutoffHigh[is.na(cutoffHigh)] <- 0
+        
+    for (j in 1:length(sim_biomass)) {
+        sim_biomass[j] = sum((sim@n[dim(sim@n)[1],j,] * params@w * 
+            params@dw)[params@w >= cutoffLow[j] & cutoffHigh[j] >= params@w])
+    }
+    
+
+    pred <- log(sim_biomass)
+    dat <- log(dat)
+    discrep <- pred - dat
+    discrep <- (sum(discrep^2))
+    return(discrep)
+}
+```
+
+
+For setup, run all the blocks above. Do not knit.
+Latest simulation calibrated is sim18 (saved as params/params7.RDS)
+
+### Calibration - previous steps in report.Rmd
+
+```{r}
+sim20 <- readRDS("params/params8.RDS")
+# create set of params for the optimisation process
+tic()
+params_optim <- sim20@params
+
+vary<-c(log10(params_optim@species_params$R_max),
+        params_optim@species_params$erepro,
+        params_optim@species_params$interaction_resource,
+        params_optim@interaction)
+
+params_optim<-setParams(params_optim)
+# set up workers
+noCores <- parallel::detectCores() - 1 # keep some spare core
+cl <- parallel::makeCluster(noCores, setup_timeout = 0.5)
+setDefaultCluster(cl = cl)
+clusterExport(cl, varlist = "cl",envir=environment())
+clusterEvalQ(cl, {
+  library(mizerExperimental)
+  library(optimParallel)
+})
+optim_result <- optimParallel::optimParallel(par=vary,getErrorCustom,params=params_optim,
+                                             dat = params_optim@species_params$biomass_observed, method ="L-BFGS-B", 
+                                             lower=c(rep(3,9),rep(1e-10,9),rep(.1,9),rep(.1,81)),
+                                             upper= c(rep(15,9),rep(1,9),rep(.99,9),rep(.99,81)),
+                                             parallel=list(loginfo=TRUE, forward=TRUE))
+stopCluster(cl)
+
+toc()
+saveRDS(optim_result, file="params/optim_result_truncatedB3.RDS")
+optim_result <- readRDS("params/optim_result_truncatedB2.RDS")
+```
+
+
+```{r}
+
+species_params(params_optim)$R_max<-10^optim_result$par[1:9]
+species_params(params_optim)$erepro<-optim_result$par[10:18]
+species_params(params_optim)$interaction_resource <- optim_result$par[19:27]
+  interaction <- params_optim@interaction
+  interaction[] <- matrix(optim_result$par[28:108],nrow = 9)
+  params_optim <- setInteraction(params_optim,interaction)
+
+sim_optim <- project(params_optim, t_max = 2000)
+
+plotBiomass(sim_optim)
+
+plotBiomassObservedVsModelCustom(sim_optim)
+
+plotDiet2(sim_optim)
+plotGrowthCurves(sim_optim, species_panel = T)
+```
+
+Growth are a bit too quick... but look at that match <3 (using optim_result_truncatedB2.RDS). I did another run starting from this steady state but varying the entire interaction matrix (worked in an hour and a half on super computer) and somehow the new steady state is not as good. Don't know why but will work with params9 from now on (the perfect match)
+
+```{r}
+
+params_optim@initial_n <- sim_optim@n[2000,,]
+sim <- project(params_optim)
+saveRDS(sim, file = "params/params9.RDS")
+
+```
+
+Now to do the fisheries time series
+
+
+```{r}
+
+sim21 <- readRDS("params/params9.RDS")
+
+params <- sim21@params
+
+ll_area_yr <- read_csv("ll_area_yr.csv")
+
+ll_trends <- cbind(ll_trends,ll_area_yr[-dim(ll_area_yr)[1],3])
+
+ll_km2 <- data.frame("year" = ll_trends$Year, "effort" = ll_trends$Effort/ll_trends$area_km,
+                     "catchT" = ll_trends$CatchT / ll_trends$area_km)
+ll_km2$catchT <- ll_km2$catchT * 1e6 #in grams
+ll_avg <- mean(ll_km2$catchT)
+effort_avg <-mean(ll_km2$effort)
+
+# going to use pre 2015 data only for now
+# ll_km2 <- ll_km2[2:18,]
+
+  effort <-array(ll_km2$effort, dim = c(length(ll_km2$effort),1), 
+                 dimnames = list("time" = ll_km2$year, "gear" = params@gear_params$gear[1]))
+
+# ggplot(ll_km2) +
+#   geom_line(aes(x = year, y = catchT), color = "red") +
+#   geom_line(aes(x = year, y = effort/1000), color = "black")
+
+
+
+
+params@species_params$yield_observed <- c(ll_avg,rep(0,8))
+
+gear_ll<-data.frame(species = params@species_params$species,
+               gear = "longline",
+               sel_func = "knife_edge",
+               knife_edge_size = 2722 ,
+               catchability = c(7e-7,rep(0,8)),
+               initial_effort = 1)
+
+gear_params(params) <- gear_ll
+initial_effort(params) <- effort_avg # somehow doesn't work with gear_params
+
+sim22 <- project(params, t_max = 200)
+# sim23 <- project(params, effort = effort)
+#  
+# plotBiomass(sim23)
+plotFMort(sim22)
+
+plotYieldObservedVsModel(sim22, species = "D.ele")
+plotBiomass(sim22)
+
+getYield(sim22)[200,]
+sim22@params@species_params$yield_observed
+
+```
+
+Estimating catchability using average fisheries mortality. c = 7e-7 for close match. Going to use this starting value to do the time series
+
+
+```{r}
+tic()
+dat <- ll_km2
+
+  effort <-array(dat$effort, dim = c(length(dat$effort),1), 
+                 dimnames = list("time" = dat$year, "gear" = params@gear_params$gear[1]))
+
+# create set of params for the optimisation process
+params_optim <- sim22@params
+vary<-c(log10(params_optim@species_params$R_max),
+        params_optim@species_params$erepro,
+        params_optim@gear_params$catchability[1])
+params_optim<-setParams(params_optim)
+# set up workers
+noCores <- parallel::detectCores() - 1 # keep some spare core
+cl <- parallel::makeCluster(noCores, setup_timeout = 0.5)
+setDefaultCluster(cl = cl)
+clusterExport(cl, varlist = "cl",envir=environment())
+clusterEvalQ(cl, {
+  library(mizerExperimental)
+  library(optimParallel)
+})
+optim_result <- optimParallel::optimParallel(par=vary,getErrorTime,params=params_optim, dat = ll_km2, effort = effort,
+                                             method   ="L-BFGS-B", 
+                                             lower=c(rep(3,9),rep(1e-7,9),1e-9),upper= c(rep(15,9),rep(1,9),1e-2),
+                                             parallel=list(loginfo=TRUE, forward=TRUE))
+stopCluster(cl)
+
+toc()
+saveRDS(optim_result, file="params/optim_result_timeseries.RDS")
+```
+
+
+```{r}
+optim_result <- readRDS("params/optim_result_timeseriesShort.RDS")
+#put these new vals intospecies_params and go back to the top of this page to re-check the calibration 
+species_params(params_optim)$R_max<-10^optim_result$par[1:9]
+species_params(params_optim)$erepro<-optim_result$par[10:18]
+gear_params(params_optim)$catchability[1] <-optim_result$par[19]
+#re-run time-varying effort model tthough time with new erepro
+sim_optim <- project(params_optim, effort = effort)
+
+plotBiomass(sim_optim)
+plotFMort(sim_optim)
+res <- plotYield(sim_optim,return_data = T)
+res$ObservedYield <- ll_km2$catchT
+
+ggplot(res, aes(x = Year)) +
+  geom_line(aes(y = Yield)) +
+  geom_line(aes(y = ObservedYield), color = "red")
+
+saveRDS(sim_optim, file = "params/params10.RDS")
+
+```
+
+
+Checking the error on the match, it's pretty big but I guess it will do
+
+```{r}
+
+biomass <- sweep(sim_optim@n, 3, sim_optim@params@w * sim_optim@params@dw, "*")
+
+
+f_gear<-getFMortGear(params,effort)
+yield_species_gear <- apply(sweep(f_gear, c(1, 3, 4), biomass, "*"),
+                            c(1, 2, 3), sum)
+
+yield_species <-apply(yield_species_gear, c(1, 3), sum)
+
+yield_frame <- melt(yield_species)
+
+obs<-dat$catchT
+pred<-yield_frame$value[1:18] # only selecting D.ele for now
+
+
+error <- sum((log(pred[1:13]) - log(obs[1:13]))^2,na.rm=T)
+
+error
+```
+
+
+## Adding the temperature using therMizer
+
+Functions to load
+```{r}
+library(therMizer)
+# Calculate the temperature scaling factor for the encounter rate, 
+# predation mortality rate and resource mortality rate
+scaled_temp_effect <- function(t) {
+  # Using t+1 to avoid calling ocean_temp[0,] at the first time step
+  temp_at_t <- other_params(params)$ocean_temp[t + 1,]
+  
+  # Calculate unscaled temperature effect using a generic polynomial rate equation
+  unscaled_temp_effect <- 
+    temp_at_t * (temp_at_t - species_params(params)$temp_min) * 
+    (species_params(params)$temp_max - temp_at_t)
+  
+  # Scale using new parameter
+  scaled_temp_effect <- unscaled_temp_effect / species_params(params)$encounterpred_scale
+  
+  # Set temperature effect to 0 if temperatures are outside thermal tolerance limits
+  above_max <- temp_at_t > species_params(params)$temp_max
+  below_min <- temp_at_t < species_params(params)$temp_min
+  
+  scaled_temp_effect[above_max | below_min] = 0
+  
+  scaled_temp_effect
+}
+therMizerEncounter <- function(params, t, ...) {
+  
+  # Calculate maximum possible encounter rate
+  max_encounter <- mizerEncounter(params, t, ...)
+  
+  # Apply temperature effect
+  # return(sweep(max_encounter, 1, scaled_temp_effect, '*', check.margin = FALSE))
+  return(max_encounter * scaled_temp_effect(t))
+  
+}
+therMizerPredRate <- function(params, t, ...) {
+  # Calculate maximum possible encounter rate
+  max_predrate <- mizerPredRate(params, t, ...)
+  
+  # Apply temperature effect
+  # return(sweep(max_predrate, 1, scaled_temp_effect, '*', check.margin = FALSE))
+  return(max_predrate * scaled_temp_effect(t))
+  
+}
+
+therMizerEReproAndGrowth <- function(params, t, encounter, feeding_level, ...) {
+    
+    # Using t+1 to avoid calling ocean_temp[0,] at the first time step
+    temp_at_t <- other_params(params)$ocean_temp[t + 1,]
+  
+    # Arrhenius equation
+    unscaled_temp_effect <- (exp(25.22 - (0.63/((8.62e-5)*(273 + temp_at_t)))))
+    
+    # Arrhenius equation scaled to a value between 0 and 1
+        temp_effect_metabolism <- (unscaled_temp_effect - species_params(params)$metab_min) / species_params(params)$metab_range
+        
+        # Set temperature effect to 0 if temperatures are outside thermal tolerance limits
+    above_max <- temp_at_t > species_params(params)$temp_max
+    below_min <- temp_at_t < species_params(params)$temp_min
+    
+    temp_effect_metabolism[above_max | below_min] = 0
+  
+        # Apply scaled Arrhenius value to metabolism
+    sweep((1 - feeding_level) * encounter, 1,
+               species_params(params)$alpha, "*", check.margin = FALSE) - 
+      metab(params)*temp_effect_metabolism  
+      
+}
+```
+
+
+Editing params
+
+```{r}
+
+sim <- readRDS("params/params10.RDS")
+params <- sim@params
+
+species_params(params)$temp_min <- rep(4, 9)
+species_params(params)$temp_max <- rep(10, 9)
+
+# Create parameter for scaling encounter and mortality rates
+species_params(params)$encounterpred_scale <- rep(NA, length(species_params(params)$temp_min))
+for (indv in seq(1:length(species_params(params)$temp_min))) {
+  
+  # Create a vector of all temperatures each species might encounter
+  temperature <- seq(species_params(params)$temp_min[indv], species_params(params)$temp_max[indv], by = 0.1)
+  
+  # Find the maximum value of the unscaled effect of temperature on encounter and predation rate for each species 
+  species_params(params)$encounterpred_scale[indv] <- max((temperature) * (temperature - species_params(params)$temp_min[indv]) * (species_params(params)$temp_max[indv] - temperature))
+  
+}
+# Determine the minimum, maximum, and range of value for the effect of temperature on metabolism
+
+min_metab_value <- (exp(25.22 - (0.63/((8.62e-5)*(273 + species_params(params)$temp_min)))))
+max_metab_value <- (exp(25.22 - (0.63/((8.62e-5)*(273 + species_params(params)$temp_max)))))
+
+species_params(params)$metab_min <- min_metab_value
+species_params(params)$metab_range <- max_metab_value - min_metab_value
+
+
+# Create temperature array and fill it
+times <- 0:500
+species <- species_params(params)$species
+ocean_temp_array <- array(NA, dim = c(length(times), length(species)), dimnames = list(time = times, sp = species))
+temp_inc <- 0
+for (i in (times+1)) {
+  ocean_temp_array[i,] <- rep(1 + temp_inc, length(species))
+  temp_inc <- temp_inc + 0.01
+}
+other_params(params)$ocean_temp <- ocean_temp_array
+
+
+params <- setRateFunction(params, "Encounter", "therMizerEncounter")
+params <- setRateFunction(params, "PredRate", "therMizerPredRate")
+params <- setRateFunction(params, "EReproAndGrowth", "therMizerEReproAndGrowth")
+
+```
+
+Test
+
+```{r}
+
+sim2 <- project(params, t_max = 500, effort = 0)
+
+mizer::plotBiomass(sim2)
+```
+
+Cool it works, now I need the temperature time series to slot into ocean_temp_array
+
+
+
+## Adding temperature to mizer
+
+
+The temperature dependence was on:
+
+- intake
+
+- metabolism
+
+- background mortality
+
+Applied by changing:
+
+- search volume
+
+- intake max
+
+- metabolism
+
+- mu_b
+
+Using activation and deactivation periods and a temperature reference and temperature preferred
+
+So lots of combinations possible here. For the sake of simplicity I'm going to start with the same setup as my PhD: both activation and deactivation phases (important for heatwaves) but only on food intake (search volumme and intake max impacted)
+
+This means I need to edit
+
+- mizerEncounter for search_vol
+
+- mizerFeedingLevel for intake_max
+
+- mizerPredRate for search_vol
+
+### Temperature functions
+
+Code is saved in temperatureFuncs.R
+
+Assumption: PredRate uses feeding level which uses encounter where search volume is multiplied by the scalar. The same search volume is also multiplied by the scalar in predRate. Is it ok? Guessing yes since predrate already has search volume squared in its calculation so it should be scalar squared too.
+
+
+Testing the behavior of the function
+
+
+```{r}
+
+params <- newTraitParams(no_sp = 4)
+
+params@species_params$Ea <- 0.63
+params@species_params$c_a <- 0
+params@species_params$Ed <- 6.3
+params@species_params$c_d <- 0
+params@species_params$t_d <- 25
+params@species_params$t_ref <- 10
+
+other_params(params)$temperature <- 1:30
+
+params <- setParams(params)
+
+params@other_params$other$temperature
+
+temperature <- c(25)#,26)
+
+scalar <- tempFun(params@w, temperature = temperature,
+                  t_d = params@species_params$t_d,
+                  t_ref = params@species_params$t_ref,
+                  Ea = params@species_params$Ea,
+                  c_a = params@species_params$c_a,
+                  Ed = params@species_params$Ed,
+                  c_d = params@species_params$c_d)
+                  
+scalar <- t(drop(scalar))
+
+
+params@search_vol * t(scalar)
+
+
+
+#####
+
+
+w <- params@w
+
+y = tempFun(w = w, temperature = temperature, Ea = Ea, t_ref = t_ref, Ed = Ed)
+
+plot_dat <- data.frame("temperature" = temperature, "scalar" = y[1,])
+
+ggplot(plot_dat) +
+  geom_line(aes(x = temperature, y = scalar))
+
+y = tempFun(w = w, temperature = 15, Ea = Ea, t_ref = t_ref, Ed = Ed)
+
+```
+
+Happy
+
+
+test
+
+```{r}
+var <- NULL
+for(t in 1:30)
+{
+varTemp <- mizerEncounterTemp(params, n = params@initial_n, n_pp = params@initial_n_pp, n_other = params@initial_n_other, t = t)[1,50]
+var <- c(var,varTemp)
+}
+
+plot_dat <- data.frame("time" = 1:30, "value" = var)
+
+var2 <- mizerEncounter(params, n = params@initial_n, n_pp = params@initial_n_pp, n_other = params@initial_n_other, t = t)[1,50]
+
+ggplot(plot_dat) +
+  geom_point(aes(x = time, y = value)) +
+  geom_hline(yintercept = var2) # tref is 10
+
+
+encounter <- mizerEncounterTemp(params, n = params@initial_n, n_pp = params@initial_n_pp, n_other = params@initial_n_other, t = 15)
+
+feeding_level <- mizerFeedingLevelTemp(params, n = params@initial_n, 
+                                       n_pp = params@initial_n_pp, n_other = params@initial_n_other, 
+                                       encounter = encounter, t = 15)
+
+predRate <- mizerPredRateTemp(params, n = params@initial_n, 
+                                       n_pp = params@initial_n_pp, n_other = params@initial_n_other, 
+                                       feeding_level = feeding_level, t = 15)
+
+```
+
+
+Now writing a proper setup to enable temperature in mizer
+
+
+```{r}
+source("temperatureFuncs.R")
+# a function that:
+# adds the temperature parameters to the params object
+# replace default rates in mizer with temperature mizer
+# add temperature vector to param object
+
+#' @paramTemp a dataframe with the temperature parameters to add to the mizer object 
+
+mizerTemp <- function(temp_vec, params, paramTemp = NULL){
+  
+if(!is.null(paramTemp)){
+params@species_params$Ea <- paramTemp$Ea
+params@species_params$c_a <- paramTemp$c_a
+params@species_params$Ed <- paramTemp$Ed
+params@species_params$c_d <- paramTemp$c_d
+params@species_params$t_d <- paramTemp$t_d
+params@species_params$t_ref <- paramTemp$t_ref
+}
+
+other_params(params)$temperature <- temp_vec
+
+params <- setRateFunction(params, "Encounter", "mizerEncounterTemp")
+params <- setRateFunction(params, "FeedingLevel", "mizerFeedingLevelTemp")
+params <- setRateFunction(params, "PredRate", "mizerPredRateTemp")
+
+params <- setParams(params)
+  
+  return(params)
+}
+
+
+```
+
+
+test
+
+
+```{r}
+
+params <- newTraitParams(no_sp = 4)
+sim <- project(params)
+plotBiomass(sim)
+
+temperatureParams <- data.frame("Ea" = 0.63, "c_a" = 0, "Ed" = 6.3, "c_d" = 0,
+                                "t_d" = 25, "t_ref" = 10)
+
+temperature <- seq(10,30,length.out = 200)
+
+paramsT <- mizerTemp(temp_vec = temperature, paramTemp = temperatureParams, params = params)
+
+simT <- project(paramsT, t_max = length(temperature))
+
+plotBiomass(simT)
+```
+
+
+
+Working :)
+
+
+toothfish
+
+Preferred temperature (Ref. 115969): 1.8 - 8.8, mean 4.5 °C (based on 1109 cells).
+
+
+test
+
+```{r}
+
+ggplot(myvar) +
+  geom_histogram(aes(x = TL)) +
+  facet_wrap(~Year)
+
+
+
+```
+

@@ -336,16 +336,17 @@ matchBiomassCustom <- function (params, species = NULL)
 
 
 ```{r}
-getErrorCustom <- function(vary, params, species, dat, tol = 0.001, 
+getErrorCustom <- function(vary, params, dat, tol = 0.001, 
     timetorun = 10)
 {
   params@species_params$R_max[1:9]<-10^vary[1:9]
   params@species_params$erepro[1:9]<-vary[10:18]
+  params@species_params$interaction_resource[1:9] <- vary[19:27]
 
   params <- setParams(params)
 
   interaction <- params@interaction
-  interaction[species,] <- vary[19:27]
+  interaction[] <- matrix(vary[28:108],nrow = 9) # stop at 54 if looking only at 3 biggest species
   
   params <- setInteraction(params,interaction)
 
@@ -382,7 +383,7 @@ getErrorCustom <- function(vary, params, species, dat, tol = 0.001,
 
 
 For setup, run all the blocks above. Do not knit.
-Latest simulation calibrated is sim17 (saved as params/params7.RDS)
+Latest simulation calibrated is sim18 (saved as params/params7.RDS)
 
 ### Calibration
 
@@ -1578,27 +1579,303 @@ plotBiomassObservedVsModelCustom(sim_optim)
 
 ```
 
-RUnning sim18 through optim found a steady state but some species are pretty far from biomass data. Need to try again with lower kappa and/or adding kappa to optimisation.
+Running sim18 through optim found a steady state but some species are pretty far from biomass data. Need to try again with lower kappa and/or adding kappa to optimisation.
+
+
+
 
 
 
 ```{r}
 
-params18 <- calibrateBiomassCustom(sim17@params)
+sim18 <- readRDS("params/params7.RDS") # I think I saved previous sim_optim under params7.RDS, so this sim18 is post optimisation
 
-params18 <- matchBiomassCustom(params18)
 
-sim18 <- project(params18, t_max = 500)
+params19 <- calibrateBiomassCustom(sim18@params)
 
-plotBiomassObservedVsModelCustom(sim18@params)
+sim19 <- project(params19, t_max = 1000)
 
-plotlyBiomass(sim18)
+```
+
+B.mur has a too high steady state, going to look at it manually
+
+
+
+snapshot of size spectrum with the area where the data comes from
+
+
+```{r}
+plot_dat <- plotSpectra(sim18, return_data = T)
+
+ggplot(plot_dat) +
+  geom_line(aes(x = w, y = value, color = Species)) +
+  scale_x_continuous(trans = "log10") +
+  scale_y_continuous(trans = "log10") +
+  annotate("rect", xmin=sim18@params@species_params$biomass_cutoffLow[1], xmax=sim18@params@species_params$biomass_cutoffHigh[1], ymin=0, ymax=Inf, alpha=0.2, fill="red") +
+  scale_color_manual(values = sim18@params@linecolour)
+
 ```
 
 
+```{r}
+#fixing D.ele
+params20 <- params19
+params20@species_params$R_max[1] <- params19@species_params$R_max[1]*3
+params20@resource_params$kappa <- params19@resource_params$kappa *50
+params20 <- setParams(params20)
+
+sim20 <- project(params20, t_max = 1000)
+plotBiomass(sim20)
+
+getBiomass(sim19)[1000,]
+getBiomass(sim20)[1000,]
+
+plotBiomassObservedVsModelCustom(sim20)
+
+params20@initial_n <- sim20@n[1000,,]
+
+params21 <- params20
+params21@species_params$R_max[2] <- params20@species_params$R_max[2]*3
+params21@species_params$R_max[3] <- params20@species_params$R_max[3]*3
+params21@species_params$R_max[4] <- params20@species_params$R_max[4]/3
+params21@species_params$R_max[6] <- params20@species_params$R_max[6]*2
+params21@species_params$R_max[7] <- params20@species_params$R_max[7]*1.5
+params21@species_params$R_max[8] <- params20@species_params$R_max[8]/100
+params21@species_params$R_max[9] <- params20@species_params$R_max[9]/1000000
+params21@species_params$erepro[9] <- params20@species_params$erepro[9]*10
+
+
+params21 <- setParams(params21)
+
+sim21 <- project(params21, t_max = 200)
+plotBiomass(sim21)
+plotBiomassObservedVsModelCustom(sim21)
+getBiomass(sim20)[1000,]
+getBiomass(sim21)[1000,]
 
 
 
+```
+
+Hard to get D.ele and B.mur coexisting while having biomass close to the data
+
+
+```{r}
+
+params19 <- scaleModel(params = sim18@params,factor = .25)
+plotBiomassObservedVsModelCustom(params19)
+plotGrowthCurves(params19, species_panel = T)
+
+sim19 <- project(params19)
+plotBiomass(sim19)
+plotBiomassObservedVsModelCustom(sim19)
+plotGrowthCurves(sim19, species_panel = T)
+plotDiet2(sim19)
+
+params19@initial_n <- sim19@n[100,,]
+params20 <- params19
+params20@species_params$R_max[8] <- params19@species_params$R_max[8]/10
+params20@species_params$R_max[9] <- params19@species_params$R_max[9]/10000000000
+sim20 <- project(params20, t_max = 1000)
+plotBiomass(sim20)
+params20@initial_n <- sim20@n[1000,,]
+sim20 <- project(params20)
+
+saveRDS(sim20, file = "params/params8.RDS")
+
+# trying to fit the growth of D.ele at least
+
+params20 <- params19
+params20@species_params$gamma[1] <- params19@species_params$gamma[1]/5
+
+params20 <- setParams(params20)
+
+sim20 <- project(params20)
+plotBiomass(sim20)
+plotBiomassObservedVsModelCustom(sim20)
+plotGrowthCurves(sim20, species_panel = T)
+```
+
+There is always something wrong so rerunning optim with more params
+
+
+```{r}
+sim20 <- readRDS("params/params8.RDS")
+# create set of params for the optimisation process
+tic()
+params_optim <- sim20@params
+
+vary<-c(log10(params_optim@species_params$R_max),
+        params_optim@species_params$erepro,
+        params_optim@species_params$interaction_resource,
+        params_optim@interaction)
+
+params_optim<-setParams(params_optim)
+# set up workers
+noCores <- parallel::detectCores() - 1 # keep some spare core
+cl <- parallel::makeCluster(noCores, setup_timeout = 0.5)
+setDefaultCluster(cl = cl)
+clusterExport(cl, varlist = "cl",envir=environment())
+clusterEvalQ(cl, {
+  library(mizerExperimental)
+  library(optimParallel)
+})
+optim_result <- optimParallel::optimParallel(par=vary,getErrorCustom,params=params_optim,
+                                             dat = params_optim@species_params$biomass_observed, method ="L-BFGS-B", 
+                                             lower=c(rep(3,9),rep(1e-10,9),rep(.1,9),rep(.1,81)),
+                                             upper= c(rep(15,9),rep(1,9),rep(.99,9),rep(.99,81)),
+                                             parallel=list(loginfo=TRUE, forward=TRUE))
+stopCluster(cl)
+
+toc()
+saveRDS(optim_result, file="params/optim_result_truncatedB3.RDS")
+optim_result <- readRDS("params/optim_result_truncatedB3.RDS")
+```
+
+
+```{r}
+
+species_params(params_optim)$R_max<-10^optim_result$par[1:9]
+species_params(params_optim)$erepro<-optim_result$par[10:18]
+species_params(params_optim)$interaction_resource <- optim_result$par[19:27]
+  interaction <- params_optim@interaction
+  interaction[] <- matrix(optim_result$par[28:108],nrow = 9)
+  params_optim <- setInteraction(params_optim,interaction)
+
+sim_optim <- project(params_optim, t_max = 2000)
+
+plotBiomass(sim_optim)
+
+plotBiomassObservedVsModelCustom(sim_optim)
+
+plotDiet2(sim_optim)
+plotGrowthCurves(sim_optim, species_panel = T)
+```
+
+Growth are a bit too quick... but look at that match <3 (using optim_result_truncatedB2.RDS). I did another run starting from this steady state but varying the entire interaction matrix (worked in an hour and a half on super computer) and somehow the new steady state is not as good. Don't know why but will work with params9 from now on (the perfect match)
+
+```{r}
+
+params_optim@initial_n <- sim_optim@n[2000,,]
+sim <- project(params_optim)
+saveRDS(sim, file = "params/params9.RDS")
+
+```
+
+Now to do the fisheries time series
+
+
+```{r}
+
+sim21 <- readRDS("params/params9.RDS")
+
+params <- sim21@params
+
+ll_area_yr <- read_csv("ll_area_yr.csv")
+
+ll_trends <- cbind(ll_trends,ll_area_yr[-dim(ll_area_yr)[1],3])
+
+ll_km2 <- data.frame("year" = ll_trends$Year, "effort" = ll_trends$Effort/ll_trends$area_km,
+                     "catchT" = ll_trends$CatchT / ll_trends$area_km)
+ll_km2$catchT <- ll_km2$catchT * 1e6 #in grams
+ll_avg <- mean(ll_km2$catchT)
+effort_avg <-mean(ll_km2$effort)
+
+# going to use pre 2015 data only for now
+ll_km2 <- ll_km2[1:17,]
+
+
+  effort <-array(ll_km2$effort, dim = c(length(ll_km2$effort),1), 
+                 dimnames = list("time" = ll_km2$year, "gear" = params@gear_params$gear[1]))
+
+# ggplot(ll_km2) +
+#   geom_line(aes(x = year, y = catchT), color = "red") +
+#   geom_line(aes(x = year, y = effort/1000), color = "black")
+
+
+
+
+params@species_params$yield_observed <- c(ll_avg,rep(0,8))
+
+gear_ll<-data.frame(species = params@species_params$species,
+               gear = "longline",
+               sel_func = "knife_edge",
+               knife_edge_size = 2722 ,
+               catchability = c(7e-7,rep(0,8)),
+               initial_effort = 1)
+
+gear_params(params) <- gear_ll
+initial_effort(params) <- effort_avg # somehow doesn't work with gear_params
+
+sim22 <- project(params, t_max = 200)
+# sim23 <- project(params, effort = effort)
+#  
+# plotBiomass(sim23)
+plotFMort(sim22)
+
+plotYieldObservedVsModel(sim22, species = "D.ele")
+plotBiomass(sim22)
+
+getYield(sim22)[500,]
+sim22@params@species_params$yield_observed
+
+```
+
+Estimating catchability using average fisheries mortality. c = 7e-7 for close match. Going to use this starting value to do the time series
+
+
+```{r}
+tic()
+dat <- ll_km2
+
+  effort <-array(dat$effort, dim = c(length(dat$effort),1), 
+                 dimnames = list("time" = dat$year, "gear" = params@gear_params$gear[1]))
+
+# create set of params for the optimisation process
+params_optim <- sim22@params
+vary<-c(log10(params_optim@species_params$R_max),
+        params_optim@species_params$erepro,
+        params_optim@gear_params$catchability[1])
+params_optim<-setParams(params_optim)
+# set up workers
+noCores <- parallel::detectCores() - 1 # keep some spare core
+cl <- parallel::makeCluster(noCores, setup_timeout = 0.5)
+setDefaultCluster(cl = cl)
+clusterExport(cl, varlist = "cl",envir=environment())
+clusterEvalQ(cl, {
+  library(mizerExperimental)
+  library(optimParallel)
+})
+optim_result <- optimParallel::optimParallel(par=vary,getErrorTime,params=params_optim, dat = ll_km2, effort = effort,
+                                             method   ="L-BFGS-B", 
+                                             lower=c(rep(3,9),rep(1e-7,9),1e-9),upper= c(rep(15,9),rep(1,9),1e-2),
+                                             parallel=list(loginfo=TRUE, forward=TRUE))
+stopCluster(cl)
+
+toc()
+saveRDS(optim_result, file="params/optim_result_timeseriesShort.RDS")
+```
+
+
+```{r}
+optim_result <- readRDS("params/optim_result_timeseriesShort.RDS")
+#put these new vals intospecies_params and go back to the top of this page to re-check the calibration 
+species_params(params_optim)$R_max<-10^optim_result$par[1:9]
+species_params(params_optim)$erepro<-optim_result$par[10:18]
+gear_params(params_optim)$catchability[1] <-optim_result$par[19]
+#re-run time-varying effort model tthough time with new erepro
+sim_optim <- project(params_optim, effort = effort)
+
+plotBiomass(sim_optim)
+plotFMort(sim_optim)
+res <- plotYield(sim_optim,return_data = T)
+res$ObservedYield <- ll_km2$catchT
+
+ggplot(res, aes(x = Year)) +
+  geom_line(aes(y = Yield)) +
+  geom_line(aes(y = ObservedYield), color = "red")
+
+```
 
 ## Adding temperature to mizer
 
