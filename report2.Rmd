@@ -651,55 +651,194 @@ error
 ```
 
 
-## Adding the temperature using therMizer
+## thermizer
+#### Parameters
 
-Functions to load
 ```{r}
 library(therMizer)
-# Calculate the temperature scaling factor for the encounter rate, 
-# predation mortality rate and resource mortality rate
-scaled_temp_effect <- function(t) {
-  # Using t+1 to avoid calling ocean_temp[0,] at the first time step
-  temp_at_t <- other_params(params)$ocean_temp[t + 1,]
-  
-  # Calculate unscaled temperature effect using a generic polynomial rate equation
-  unscaled_temp_effect <- 
-    temp_at_t * (temp_at_t - species_params(params)$temp_min) * 
-    (species_params(params)$temp_max - temp_at_t)
-  
-  # Scale using new parameter
-  scaled_temp_effect <- unscaled_temp_effect / species_params(params)$encounterpred_scale
-  
-  # Set temperature effect to 0 if temperatures are outside thermal tolerance limits
-  above_max <- temp_at_t > species_params(params)$temp_max
-  below_min <- temp_at_t < species_params(params)$temp_min
-  
-  scaled_temp_effect[above_max | below_min] = 0
-  
-  scaled_temp_effect
+
+sim <- readRDS("params/params10.RDS")
+params <- sim@params
+first_year <- 1950
+last_year <- 2093
+times <- seq(first_year,last_year, by = 1)
+
+# Setting up temperature range
+
+species_params(params)$temp_min <- c(1.8,-1.1,1.3,1.3,-0.1,-1.8,1.4,1.8,1.6)
+# species_params(params)$temp_min <- c(1.4,-1.1,1.3,1.3,-0.1,-1.8,1.4,1.4,1.4) # adjusted so species survive historical temperatures
+
+# species_params(params)$temp_max <- c(8.8,2.9,2.5,2.8,1.4,2,2.3,3.1,3.9)
+species_params(params)$temp_max <- c(8.8,2.9,2.5,2.8,2.4,2.4,2.3,3.1,3.9)
+
+```
+
+
+The parameter `t_idx` will help with the simulations by providing the correct time index for the plankton and temperature forcing during the simulations.
+
+``` {r}
+
+# Time indexing parameter
+# This will be added to t to convert the year into an index for the n_pp and ocean_temp arrays
+# if (min(times) == 0) {
+#   other_params(params)$t_idx = 1
+# } else if (min(times) == 1) {
+#   other_params(params)$t_idx = 0
+# } else {
+#   other_params(params)$t_idx = -(min(times) - 1)
+# }
+# not sure about that function, just need that:
+
+other_params(params)$t_idx = 1
+
+```
+
+To scale the effect of temperature on encounter rate to a value ranging from 0 - 1, it is necessary to divide by the maximum possible value for each species.  To scale the effect of temperature on metabolism to a value ranging from 0 - 1, it is necessary to subtract the minimum vaule for each species and then divide by the range.  This requires a bit of straightforward arithmetic, and users could do this on their end if they're so inclined.  These parameters handle that math so the user doesn't have to.
+
+
+```{r}
+# Create parameter for scaling encounter and mortality rates
+species_params(params)$encounterpred_scale <- 
+    rep(NA, nrow(species_params(params)))
+
+for (indv in seq(1:length(species_params(params)$temp_min))) {
+    
+    # Create a vector of all temperatures each species might encounter
+    temperature <- seq(species_params(params)$temp_min[indv], 
+                       species_params(params)$temp_max[indv], 
+                       by = 0.1)
+    
+    # Find the maximum value of the unscaled effect of temperature on encounter
+    # and predation rate for each species 
+  species_params(params)$encounterpred_scale[indv] <- 
+      max((temperature) * 
+              (temperature - species_params(params)$temp_min[indv]) *
+              (species_params(params)$temp_max[indv] - temperature)
+          )
 }
+
+# Determine the minimum, maximum, and range of value for the effect of 
+# temperature on metabolism
+    
+min_metab_value <- 
+    (exp(25.22 - (0.63/((8.62e-5)*(273 + species_params(params)$temp_min)))))
+max_metab_value <- 
+    (exp(25.22 - (0.63/((8.62e-5)*(273 + species_params(params)$temp_max)))))
+    
+species_params(params)$metab_min <- min_metab_value
+species_params(params)$metab_range <- max_metab_value - min_metab_value
+```
+
+
+#### Functions
+
+Temperature will be added to the functions that determine encounter rate and energy available for growth and reproduction.
+
+To scale encounter rate with temperature, we're essentially taking a temperature-dependent proportion of the value calculated by the mizerEncounter function.  If species are at their thermal optimum, we take the full value.  Elsewhere in their thermal range, we take a proportion that goes to zero at the limits of species' thermal tolerence.  
+```{r message = FALSE, warning = FALSE}
+
+# therMizerEncounter <- function(params, n, n_pp, n_other, t, ...) {
+#   # Access the correct element
+#   temp_at_t <- params@other_params$other$ocean_temp[t + params@other_params$other$t_idx,]
+#   
+#   # Calculate unscaled temperature effect using a generic polynomial rate equation
+#   unscaled_temp_effect <- temp_at_t * (temp_at_t - params@species_params$temp_min) * (params@species_params$temp_max - temp_at_t)
+#   
+#   # Scale using encounter_scale parameter
+#   scaled_temp_effect <- unscaled_temp_effect / params@species_params$encounter_scale
+#   
+#   # Set the encounter rate to zero if temperature is outside species' thermal tolerance
+#   above_max <- which(temp_at_t > params@species_params$temp_max)
+#   below_min <- which(temp_at_t < params@species_params$temp_min)
+#   
+#   if (length(above_max) > 0)
+#     scaled_temp_effect[above_max] = 0
+#   
+#   if (length(below_min) > 0)
+#     scaled_temp_effect[below_min] = 0
+#   
+#   # Calculate maximum possible encounter rate
+#   max_encounter <- mizerEncounter(params, n = n, n_pp = n_pp, n_other = n_other, ...)
+#   max_encounter <- mizerEncounter(params, n = params@initial_n, n_pp = params@other_params$other$n_pp_array[1,])
+#   
+#   # Apply temperature effect
+#   return(max_encounter * scaled_temp_effect)
+#       
+# }
+
+```
+
+To calculate the effect of temperature on metabolim, we use an Arrhenius function to scale the cost of metabolism.  When species are at their thermal maximum, the cost of metabolism is at its maximum.  When species are at their thermal minimum, the cost of metabolism is at its minimum
+
+```{r}
+# Calculate the temperature scaling factor for the encounter rate and 
+# predation rate
+scaled_temp_fun <- function(params, t) {
+    # Using t+1 to avoid calling ocean_temp[0,] at the first time step
+# print("t in scaled_temp")
+#   print(t)
+#   
+#   print("ocean temp")
+#   print(other_params(params)$ocean_temp)
+  
+    temp_at_t <- other_params(params)$ocean_temp[t + params@other_params$other$t_idx,]
+    
+    # print("temperature in scaled_temp")
+    # print(temp_at_t)
+    
+    # Calculate unscaled temperature effect using a generic polynomial rate equation
+    unscaled_temp_effect <- 
+        temp_at_t * (temp_at_t - species_params(params)$temp_min) * 
+        (species_params(params)$temp_max - temp_at_t)
+    
+    # Scale using new parameter
+    scaled_temp_effect <- 
+        unscaled_temp_effect / species_params(params)$encounterpred_scale
+    # print("intermediate temp effect")
+    # print(scaled_temp_effect)
+    # Set temperature effect to 0 if temperatures are outside thermal 
+    # tolerance limits
+    above_max <- temp_at_t > species_params(params)$temp_max
+    below_min <- temp_at_t < species_params(params)$temp_min
+    scaled_temp_effect[above_max | below_min] = 0
+    
+    # print("temp effect")
+    # print(scaled_temp_effect)
+    
+    return(scaled_temp_effect)
+}
+
+
 therMizerEncounter <- function(params, t, ...) {
-  
-  # Calculate maximum possible encounter rate
-  max_encounter <- mizerEncounter(params, t, ...)
-  
-  # Apply temperature effect
-  # return(sweep(max_encounter, 1, scaled_temp_effect, '*', check.margin = FALSE))
-  return(max_encounter * scaled_temp_effect(t))
-  
+    
+      # Calculate maximum possible encounter rate
+      max_encounter <- mizerEncounter(params, t, ...)
+      
+      # Apply temperature effect
+      return(max_encounter * scaled_temp_fun(params, t))
+      
 }
+
 therMizerPredRate <- function(params, t, ...) {
-  # Calculate maximum possible encounter rate
-  max_predrate <- mizerPredRate(params, t, ...)
-  
-  # Apply temperature effect
-  # return(sweep(max_predrate, 1, scaled_temp_effect, '*', check.margin = FALSE))
-  return(max_predrate * scaled_temp_effect(t))
-  
+      # Calculate maximum possible encounter rate
+      max_predrate <- mizerPredRate(params, t, ...)
+      # print("predrate")
+      # print(max_predrate)
+      # Apply temperature effect
+      return(max_predrate * scaled_temp_fun(params, t))
+      
 }
+
 
 therMizerEReproAndGrowth <- function(params, t, encounter, feeding_level, ...) {
     
+  # print("t")
+  # print(t)
+  # print("emcounter")
+  # print(encounter)
+  # print("feeding")
+  # print(feeding_level)
+  
     # Using t+1 to avoid calling ocean_temp[0,] at the first time step
     temp_at_t <- other_params(params)$ocean_temp[t + 1,]
   
@@ -707,20 +846,63 @@ therMizerEReproAndGrowth <- function(params, t, encounter, feeding_level, ...) {
     unscaled_temp_effect <- (exp(25.22 - (0.63/((8.62e-5)*(273 + temp_at_t)))))
     
     # Arrhenius equation scaled to a value between 0 and 1
-        temp_effect_metabolism <- (unscaled_temp_effect - species_params(params)$metab_min) / species_params(params)$metab_range
-        
-        # Set temperature effect to 0 if temperatures are outside thermal tolerance limits
+    temp_effect_metabolism <- 
+        (unscaled_temp_effect - species_params(params)$metab_min) /
+        species_params(params)$metab_range
+    
+    # Set temperature effect to 0 if temperatures are outside thermal 
+    # tolerance limits
     above_max <- temp_at_t > species_params(params)$temp_max
     below_min <- temp_at_t < species_params(params)$temp_min
-    
     temp_effect_metabolism[above_max | below_min] = 0
   
-        # Apply scaled Arrhenius value to metabolism
+  # Apply scaled Arrhenius value to metabolism
     sweep((1 - feeding_level) * encounter, 1,
-               species_params(params)$alpha, "*", check.margin = FALSE) - 
-      metab(params)*temp_effect_metabolism  
+          species_params(params)$alpha, "*", check.margin = FALSE) - 
+        metab(params)*temp_effect_metabolism  
       
 }
+```
+
+Now we'll write a function to use the CMIP6 plankton densities rather than the mizer resource dynamics.  Code for this was informed by the approach used in: <https://rpubs.com/gustav/plankton-anchovy>.  
+
+``` {r}
+
+# Set up new resource forcing "function" - just changes to different time slot in the n_pp_array array
+plankton_forcing <- function(params, t, ...) {
+  w_cut_off <- 10
+  pkt <- 10^(other_params(params)$n_pp_array[t + params@other_params$other$t_idx,])/params@dw_full # converting to density
+  pkt[which(as.numeric(names(pkt)) >= w_cut_off)] <- 0
+  
+  return(pkt)  
+}
+
+```
+
+
+```{r}
+
+# pkt_rom <- function(params, t, ...){
+#   a <- rep(1,209)
+#   return(a)
+# }
+
+
+```
+
+
+
+Set the new rate functions and new resource
+
+```{r}
+
+params <- setRateFunction(params, "Encounter", "therMizerEncounter")
+params <- setRateFunction(params, "PredRate", "therMizerPredRate")
+params <- setRateFunction(params, "EReproAndGrowth", "therMizerEReproAndGrowth")
+
+params <- setResource(params, resource_dynamics = "plankton_forcing")
+# params <- setResource(params, resource_dynamics = "pkt_rom")
+
 ```
 
 
@@ -728,269 +910,107 @@ Editing params
 
 ```{r}
 
-sim <- readRDS("params/params10.RDS")
-params <- sim@params
+# Create parameter objects
+params_IPSL_picontrol <- params
+params_IPSL_ssp1rcp26 <- params
+params_IPSL_ssp5rcp85 <- params
 
-species_params(params)$temp_min <- rep(4, 9)
-species_params(params)$temp_max <- rep(10, 9)
+# Attach temperature
+other_params(params_IPSL_picontrol)$ocean_temp <- readRDS("~/RstudioProjects/FISHMIP/data/processed/IPSL_ocean_temp_array_PIcontrol.RDS")
+other_params(params_IPSL_ssp1rcp26)$ocean_temp <- readRDS("~/RstudioProjects/FISHMIP/data/processed/IPSL_ocean_temp_array_CCscenario_126.RDS")
+other_params(params_IPSL_ssp5rcp85)$ocean_temp <- readRDS("~/RstudioProjects/FISHMIP/data/processed/IPSL_ocean_temp_array_CCscenario_585.RDS")
 
-# Create parameter for scaling encounter and mortality rates
-species_params(params)$encounterpred_scale <- rep(NA, length(species_params(params)$temp_min))
-for (indv in seq(1:length(species_params(params)$temp_min))) {
-  
-  # Create a vector of all temperatures each species might encounter
-  temperature <- seq(species_params(params)$temp_min[indv], species_params(params)$temp_max[indv], by = 0.1)
-  
-  # Find the maximum value of the unscaled effect of temperature on encounter and predation rate for each species 
-  species_params(params)$encounterpred_scale[indv] <- max((temperature) * (temperature - species_params(params)$temp_min[indv]) * (species_params(params)$temp_max[indv] - temperature))
-  
-}
-# Determine the minimum, maximum, and range of value for the effect of temperature on metabolism
+# Attach plankton
+other_params(params_IPSL_picontrol)$n_pp_array <- readRDS("~/RstudioProjects/FISHMIP/data/processed/IPSL_n_pp_array_PIcontrol.RDS")
+other_params(params_IPSL_ssp1rcp26)$n_pp_array <- readRDS("~/RstudioProjects/FISHMIP/data/processed/IPSL_n_pp_array_CCscenario_126.RDS")
+other_params(params_IPSL_ssp5rcp85)$n_pp_array <- readRDS("~/RstudioProjects/FISHMIP/data/processed/IPSL_n_pp_array_CCscenario_585.RDS")
 
-min_metab_value <- (exp(25.22 - (0.63/((8.62e-5)*(273 + species_params(params)$temp_min)))))
-max_metab_value <- (exp(25.22 - (0.63/((8.62e-5)*(273 + species_params(params)$temp_max)))))
-
-species_params(params)$metab_min <- min_metab_value
-species_params(params)$metab_range <- max_metab_value - min_metab_value
-
-
-# Create temperature array and fill it
-times <- 0:500
-species <- species_params(params)$species
-ocean_temp_array <- array(NA, dim = c(length(times), length(species)), dimnames = list(time = times, sp = species))
-temp_inc <- 0
-for (i in (times+1)) {
-  ocean_temp_array[i,] <- rep(1 + temp_inc, length(species))
-  temp_inc <- temp_inc + 0.01
-}
-other_params(params)$ocean_temp <- ocean_temp_array
-
-
-params <- setRateFunction(params, "Encounter", "therMizerEncounter")
-params <- setRateFunction(params, "PredRate", "therMizerPredRate")
-params <- setRateFunction(params, "EReproAndGrowth", "therMizerEReproAndGrowth")
 
 ```
+
+No thermizer predrate included
+
 
 Test
 
 ```{r}
 
-sim2 <- project(params, t_max = 500, effort = 0)
+sim <- project(params_IPSL_picontrol, 
+               initial_n_pp = params_IPSL_picontrol@other_params$other$n_pp_array[1,],
+                                      t_max = length(times))
 
-mizer::plotBiomass(sim2)
+ mizer::plotBiomass(sim)
+ mizer::plotSpectra(sim)
 ```
 
-Cool it works, now I need the temperature time series to slot into ocean_temp_array
 
 
-
-## Adding temperature to mizer
-
-
-The temperature dependence was on:
-
-- intake
-
-- metabolism
-
-- background mortality
-
-Applied by changing:
-
-- search volume
-
-- intake max
-
-- metabolism
-
-- mu_b
-
-Using activation and deactivation periods and a temperature reference and temperature preferred
-
-So lots of combinations possible here. For the sake of simplicity I'm going to start with the same setup as my PhD: both activation and deactivation phases (important for heatwaves) but only on food intake (search volumme and intake max impacted)
-
-This means I need to edit
-
-- mizerEncounter for search_vol
-
-- mizerFeedingLevel for intake_max
-
-- mizerPredRate for search_vol
-
-### Temperature functions
-
-Code is saved in temperatureFuncs.R
-
-Assumption: PredRate uses feeding level which uses encounter where search volume is multiplied by the scalar. The same search volume is also multiplied by the scalar in predRate. Is it ok? Guessing yes since predrate already has search volume squared in its calculation so it should be scalar squared too.
-
-
-Testing the behavior of the function
-
+Scenarios
 
 ```{r}
 
-params <- newTraitParams(no_sp = 4)
+sim <- project(params_IPSL_ssp1rcp26, 
+               initial_n_pp = params_IPSL_ssp1rcp26@other_params$other$n_pp_array[1,],
+                                      t_max = length(times))
 
-params@species_params$Ea <- 0.63
-params@species_params$c_a <- 0
-params@species_params$Ed <- 6.3
-params@species_params$c_d <- 0
-params@species_params$t_d <- 25
-params@species_params$t_ref <- 10
-
-other_params(params)$temperature <- 1:30
-
-params <- setParams(params)
-
-params@other_params$other$temperature
-
-temperature <- c(25)#,26)
-
-scalar <- tempFun(params@w, temperature = temperature,
-                  t_d = params@species_params$t_d,
-                  t_ref = params@species_params$t_ref,
-                  Ea = params@species_params$Ea,
-                  c_a = params@species_params$c_a,
-                  Ed = params@species_params$Ed,
-                  c_d = params@species_params$c_d)
-                  
-scalar <- t(drop(scalar))
-
-
-params@search_vol * t(scalar)
+ mizer::plotBiomass(sim)
+ mizer::plotSpectra(sim)
+```
 
 
 
-#####
+What does the temperature looks like?
+
+```{r}
+
+temp <- params_IPSL_ssp1rcp26@other_params$other$ocean_temp[,1] # all species have the same profile
+temp <-temp[1:50]
+plot(temp)
+summary(temp)
+params@species_params$temp_min
+params@species_params$temp_max
+
+plot_dat <- data.frame("Species" = rep(factor(params@species_params$species, levels = params@species_params$species),2), "temperature" = c(params@species_params$temp_min, params@species_params$temp_max))
 
 
-w <- params@w
+ggplot(plot_dat) + 
+  geom_line(aes(x = Species,y= temperature ), alpha = .5, size = 2)+
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  geom_hline(yintercept = summary(temp)[2], color = "red", alpha = .5) +
+  geom_hline(yintercept = summary(temp)[5], color = "red", alpha = .5) +
+  geom_hline(yintercept = summary(temp)[1], color = "red", alpha = .5, linetype = "dashed") +
+  geom_hline(yintercept = summary(temp)[6], color = "red", alpha = .5, linetype = "dashed") +
+  scale_y_continuous(breaks = seq(0,10,.2))
 
-y = tempFun(w = w, temperature = temperature, Ea = Ea, t_ref = t_ref, Ed = Ed)
+```
 
-plot_dat <- data.frame("temperature" = temperature, "scalar" = y[1,])
+Plot above shows the thermal range of the species with the mean temperature (between red lines) and their 1st and 3rd quantile (red dashed). Temperature data is from picon
+
+Some species thermal range do not overlap with the current temperature. What happens in that case? (thermal range is from fishbase)
+
+If temperature is outside species thermal range, they just die. The scalar can only scale down too...
+
+
+Looking at the data
+
+```{r}
+
+plot_dat <- data.frame(other_params(params_IPSL_picontrol)$ocean_temp[,1], other_params(params_IPSL_ssp1rcp26)$ocean_temp[,1], other_params(params_IPSL_ssp5rcp85)$ocean_temp[,1])
+colnames(plot_dat) <- c("picon", "ssp126", "ssp585")
+plot_dat$Year <- as.numeric(rownames(plot_dat))
+
+plot_dat <- reshape2::melt(plot_dat, "Year")
 
 ggplot(plot_dat) +
-  geom_line(aes(x = temperature, y = scalar))
-
-y = tempFun(w = w, temperature = 15, Ea = Ea, t_ref = t_ref, Ed = Ed)
-
+  geom_line(aes(x = Year, y = value, color = variable))
 ```
 
-Happy
+I calibrated my species using picon but it differs from 1950 already. Need to check ssp average temperature 1950-2000 to get my temperature range
 
-
-test
-
-```{r}
-var <- NULL
-for(t in 1:30)
-{
-varTemp <- mizerEncounterTemp(params, n = params@initial_n, n_pp = params@initial_n_pp, n_other = params@initial_n_other, t = t)[1,50]
-var <- c(var,varTemp)
-}
-
-plot_dat <- data.frame("time" = 1:30, "value" = var)
-
-var2 <- mizerEncounter(params, n = params@initial_n, n_pp = params@initial_n_pp, n_other = params@initial_n_other, t = t)[1,50]
-
-ggplot(plot_dat) +
-  geom_point(aes(x = time, y = value)) +
-  geom_hline(yintercept = var2) # tref is 10
-
-
-encounter <- mizerEncounterTemp(params, n = params@initial_n, n_pp = params@initial_n_pp, n_other = params@initial_n_other, t = 15)
-
-feeding_level <- mizerFeedingLevelTemp(params, n = params@initial_n, 
-                                       n_pp = params@initial_n_pp, n_other = params@initial_n_other, 
-                                       encounter = encounter, t = 15)
-
-predRate <- mizerPredRateTemp(params, n = params@initial_n, 
-                                       n_pp = params@initial_n_pp, n_other = params@initial_n_other, 
-                                       feeding_level = feeding_level, t = 15)
-
-```
-
-
-Now writing a proper setup to enable temperature in mizer
-
-
-```{r}
-source("temperatureFuncs.R")
-# a function that:
-# adds the temperature parameters to the params object
-# replace default rates in mizer with temperature mizer
-# add temperature vector to param object
-
-#' @paramTemp a dataframe with the temperature parameters to add to the mizer object 
-
-mizerTemp <- function(temp_vec, params, paramTemp = NULL){
-  
-if(!is.null(paramTemp)){
-params@species_params$Ea <- paramTemp$Ea
-params@species_params$c_a <- paramTemp$c_a
-params@species_params$Ed <- paramTemp$Ed
-params@species_params$c_d <- paramTemp$c_d
-params@species_params$t_d <- paramTemp$t_d
-params@species_params$t_ref <- paramTemp$t_ref
-}
-
-other_params(params)$temperature <- temp_vec
-
-params <- setRateFunction(params, "Encounter", "mizerEncounterTemp")
-params <- setRateFunction(params, "FeedingLevel", "mizerFeedingLevelTemp")
-params <- setRateFunction(params, "PredRate", "mizerPredRateTemp")
-
-params <- setParams(params)
-  
-  return(params)
-}
-
-
-```
-
-
-test
-
-
-```{r}
-
-params <- newTraitParams(no_sp = 4)
-sim <- project(params)
-plotBiomass(sim)
-
-temperatureParams <- data.frame("Ea" = 0.63, "c_a" = 0, "Ed" = 6.3, "c_d" = 0,
-                                "t_d" = 25, "t_ref" = 10)
-
-temperature <- seq(10,30,length.out = 200)
-
-paramsT <- mizerTemp(temp_vec = temperature, paramTemp = temperatureParams, params = params)
-
-simT <- project(paramsT, t_max = length(temperature))
-
-plotBiomass(simT)
-```
+For species to survive picon I need to lower t_min but for the historical data I need to increase t_max (slighlty so they're fine with historical but not with global warming)
+Funny is that the species with the widest temperature rante is toothfish and is actually perfectly fine with temperature increasing, other species are not though
 
 
 
-Working :)
 
-
-toothfish
-
-Preferred temperature (Ref. 115969): 1.8 - 8.8, mean 4.5 °C (based on 1109 cells).
-
-
-test
-
-```{r}
-
-ggplot(myvar) +
-  geom_histogram(aes(x = TL)) +
-  facet_wrap(~Year)
-
-
-
-```
 

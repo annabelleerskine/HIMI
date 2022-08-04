@@ -151,10 +151,12 @@ max. published weight: 9.6 kg  (finding 140 kg using a and b, wtf; need to lower
 max. reported age: 31 years 
 
 a=0.00631
-
+z
 b=3.15
 
 Biology: At 12-15 cm TL, semi-pelagic juveniles become demersal at 150-400 m depth. Adults migrate to deeper habitats at depths greater than 1,000 m. Utilized as food fish.
+
+Preferred temperature (Ref. 115969): 1.8 - 8.8, mean 4.5 °C (based on 1109 cells).
 
 ### Champsocephalus gunnari
 
@@ -173,6 +175,8 @@ b=3.47
 max. published weight: 2.0 kg (finding 2.47 kg using a and b coeficients)
 
 Biology: Feed mainly on krill and mysids. Spawn in autumn and winter. Synchronous spawner. Larval pelagic phase is long. Utilized as a food fish.
+
+Preferred temperature (Ref. 115969): -1.1 - 2.9, mean 1.5 °C (based on 50 cells).
 
 ### Channichthys rhinoceratus
 
@@ -194,6 +198,8 @@ K = 0.3
 
 Biology: Adults are found from near shore to farther than 750 m. Feed mainly on fishes and occasionally on algae.
 
+Preferred temperature (Ref. 115969): 1.3 - 2.5, mean 1.8 °C (based on 23 cells).
+
 ### Lepidonotothen squamifrons
 
 https://www.fishbase.se/summary/Lepidonotothen-squamifrons.html
@@ -212,6 +218,8 @@ b=3.24
 
 Feeds chiefly on macrozooplankton (mainly crustaceans, cnidarians and salps) and midwater fishes.
 
+Preferred temperature (Ref. 115969): 1.3 - 2.8, mean 1.7 °C (based on 21 cells).
+
 ### Macrourus
 
 Only have the genus, don't know about the species, only that there are 2.
@@ -223,6 +231,8 @@ https://www.fishbase.se/summary/7139
 Maturity: Lm ?  range ? - ? cm
 
 Max length : 84.0 cm TL male/unsexed; (Ref. 124151); max. published weight: 5.1 kg (Ref. 124151)
+
+Preferred temperature (Ref. 115969): -0.1 - 1.4, mean 0.6 °C (based on 598 cells).
 
 https://www.fishbase.se/summary/7137
 
@@ -246,6 +256,7 @@ b=3.12
 
 Biology: Oviparous. Eggs have horn-like projections on the shell.
 
+Preferred temperature (Ref. 115969): -1.8 - 2, mean -0.9 °C (based on 119 cells).
 
 ### Bathyraja irrasa
 
@@ -261,6 +272,8 @@ b=3.12
 
 Biology: Oviparous. Distinct pairing with embrace. Young may tend to follow large objects, such as their mother. Eggs are oblong capsules with stiff pointed horns at the corners deposited in sandy or muddy flats. Egg capsules are 11.38 cm long and 7.36 cm wide.
 
+Preferred temperature (Ref. 115969): 1.4 - 2.3, mean 2.1 °C (based on 19 cells).
+
 ### Gobionotothen acuta
 
 https://www.fishbase.se/summary/Gobionotothen-acuta.html
@@ -274,6 +287,8 @@ a=0.00603
 b=3.25
 
 Biology: Found in fairly shallow water
+
+Preferred temperature (Ref. 115969): 1.8 - 3.1, mean 2.5 °C (based on 15 cells).
 
 ### Bathyraja murrayi
 
@@ -289,6 +304,7 @@ b=3.12
 
 Oviparous. Distinct pairing with embrace. Young may tend to follow large objects, such as their mother. Eggs are oblong capsules with stiff pointed horns at the corners deposited in sandy or muddy flats. Egg capsules are 6.0 cm long and 3.4 cm wide. Frequently taken in commercial bottom hauls but not much utilized because of its small size
 
+Preferred temperature (Ref. 115969): 1.6 - 3.9, mean 3 °C (based on 42 cells).
 
 Extracting data from Kieran csv
 
