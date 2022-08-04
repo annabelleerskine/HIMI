@@ -1,0 +1,215 @@
+---
+title: temperature to make as package
+author: RF
+
+
+
+## Adding temperature to mizer
+
+
+The temperature dependence was on:
+
+- intake
+
+- metabolism
+
+- background mortality
+
+Applied by changing:
+
+- search volume
+
+- intake max
+
+- metabolism
+
+- mu_b
+
+Using activation and deactivation periods and a temperature reference and temperature preferred
+
+So lots of combinations possible here. For the sake of simplicity I'm going to start with the same setup as my PhD: both activation and deactivation phases (important for heatwaves) but only on food intake (search volumme and intake max impacted)
+
+This means I need to edit
+
+- mizerEncounter for search_vol
+
+- mizerFeedingLevel for intake_max
+
+- mizerPredRate for search_vol
+
+### Temperature functions
+
+Code is saved in temperatureFuncs.R
+
+Assumption: PredRate uses feeding level which uses encounter where search volume is multiplied by the scalar. The same search volume is also multiplied by the scalar in predRate. Is it ok? Guessing yes since predrate already has search volume squared in its calculation so it should be scalar squared too.
+
+
+Testing the behavior of the function
+
+
+```{r}
+
+params <- newTraitParams(no_sp = 4)
+
+params@species_params$Ea <- 0.63
+params@species_params$c_a <- 0
+params@species_params$Ed <- 6.3
+params@species_params$c_d <- 0
+params@species_params$t_d <- 25
+params@species_params$t_ref <- 10
+
+other_params(params)$temperature <- 1:30
+
+params <- setParams(params)
+
+params@other_params$other$temperature
+
+temperature <- c(25)#,26)
+
+scalar <- tempFun(params@w, temperature = temperature,
+                  t_d = params@species_params$t_d,
+                  t_ref = params@species_params$t_ref,
+                  Ea = params@species_params$Ea,
+                  c_a = params@species_params$c_a,
+                  Ed = params@species_params$Ed,
+                  c_d = params@species_params$c_d)
+                  
+scalar <- t(drop(scalar))
+
+
+params@search_vol * t(scalar)
+
+
+
+#####
+
+
+w <- params@w
+
+y = tempFun(w = w, temperature = temperature, Ea = Ea, t_ref = t_ref, Ed = Ed)
+
+plot_dat <- data.frame("temperature" = temperature, "scalar" = y[1,])
+
+ggplot(plot_dat) +
+  geom_line(aes(x = temperature, y = scalar))
+
+y = tempFun(w = w, temperature = 15, Ea = Ea, t_ref = t_ref, Ed = Ed)
+
+```
+
+Happy
+
+
+test
+
+```{r}
+var <- NULL
+for(t in 1:30)
+{
+varTemp <- mizerEncounterTemp(params, n = params@initial_n, n_pp = params@initial_n_pp, n_other = params@initial_n_other, t = t)[1,50]
+var <- c(var,varTemp)
+}
+
+plot_dat <- data.frame("time" = 1:30, "value" = var)
+
+var2 <- mizerEncounter(params, n = params@initial_n, n_pp = params@initial_n_pp, n_other = params@initial_n_other, t = t)[1,50]
+
+ggplot(plot_dat) +
+  geom_point(aes(x = time, y = value)) +
+  geom_hline(yintercept = var2) # tref is 10
+
+
+encounter <- mizerEncounterTemp(params, n = params@initial_n, n_pp = params@initial_n_pp, n_other = params@initial_n_other, t = 15)
+
+feeding_level <- mizerFeedingLevelTemp(params, n = params@initial_n, 
+                                       n_pp = params@initial_n_pp, n_other = params@initial_n_other, 
+                                       encounter = encounter, t = 15)
+
+predRate <- mizerPredRateTemp(params, n = params@initial_n, 
+                                       n_pp = params@initial_n_pp, n_other = params@initial_n_other, 
+                                       feeding_level = feeding_level, t = 15)
+
+```
+
+
+Now writing a proper setup to enable temperature in mizer
+
+
+```{r}
+source("temperatureFuncs.R")
+# a function that:
+# adds the temperature parameters to the params object
+# replace default rates in mizer with temperature mizer
+# add temperature vector to param object
+
+#' @paramTemp a dataframe with the temperature parameters to add to the mizer object 
+
+mizerTemp <- function(temp_vec, params, paramTemp = NULL){
+  
+if(!is.null(paramTemp)){
+params@species_params$Ea <- paramTemp$Ea
+params@species_params$c_a <- paramTemp$c_a
+params@species_params$Ed <- paramTemp$Ed
+params@species_params$c_d <- paramTemp$c_d
+params@species_params$t_d <- paramTemp$t_d
+params@species_params$t_ref <- paramTemp$t_ref
+}
+
+other_params(params)$temperature <- temp_vec
+
+params <- setRateFunction(params, "Encounter", "mizerEncounterTemp")
+params <- setRateFunction(params, "FeedingLevel", "mizerFeedingLevelTemp")
+params <- setRateFunction(params, "PredRate", "mizerPredRateTemp")
+
+params <- setParams(params)
+  
+  return(params)
+}
+
+
+```
+
+
+test
+
+
+```{r}
+
+params <- newTraitParams(no_sp = 4)
+sim <- project(params)
+plotBiomass(sim)
+
+temperatureParams <- data.frame("Ea" = 0.63, "c_a" = 0, "Ed" = 6.3, "c_d" = 0,
+                                "t_d" = 25, "t_ref" = 10)
+
+temperature <- seq(10,30,length.out = 200)
+
+paramsT <- mizerTemp(temp_vec = temperature, paramTemp = temperatureParams, params = params)
+
+simT <- project(paramsT, t_max = length(temperature))
+
+plotBiomass(simT)
+```
+
+
+
+Working :)
+
+
+toothfish
+
+Preferred temperature (Ref. 115969): 1.8 - 8.8, mean 4.5 °C (based on 1109 cells).
+
+
+test
+
+```{r}
+
+ggplot(myvar) +
+  geom_histogram(aes(x = TL)) +
+  facet_wrap(~Year)
+
+
+
+```
+
