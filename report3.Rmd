@@ -27,11 +27,12 @@ load("size_spec_inputs.RData")
 scaled_temp_fun <- function(params, t) {
     # Using t+1 to avoid calling ocean_temp[0,] at the first time step
 
-  print("model time")
-  print(t)
-  print("adjusted time")
-  print(t + params@other_params$other$t_idx)
-  
+  # print("model time")
+  # print(t)
+  # print("adjusted time")
+  # print(t + params@other_params$other$t_idx)
+  # print("temperature")
+  # print(other_params(params)$ocean_temp)
     if(t == 0) temp_at_t <- other_params(params)$ocean_temp[t + 1,]
     else temp_at_t <- other_params(params)$ocean_temp[t + params@other_params$other$t_idx,]
 
@@ -225,14 +226,14 @@ params_IPSL_ssp1rcp26 <- params
 params_IPSL_ssp5rcp85 <- params
 
 # Attach temperature
-other_params(params_IPSL_picontrol)$ocean_temp <- readRDS("~/RstudioProjects/FISHMIP/data/processed/IPSL_ocean_temp_array_PIcontrol.RDS")
-other_params(params_IPSL_ssp1rcp26)$ocean_temp <- readRDS("~/RstudioProjects/FISHMIP/data/processed/IPSL_ocean_temp_array_CCscenario_126.RDS")
-other_params(params_IPSL_ssp5rcp85)$ocean_temp <- readRDS("~/RstudioProjects/FISHMIP/data/processed/IPSL_ocean_temp_array_CCscenario_585.RDS")
+other_params(params_IPSL_picontrol)$ocean_temp <- readRDS("processed/IPSL_ocean_temp_array_PIcontrol.RDS")
+other_params(params_IPSL_ssp1rcp26)$ocean_temp <- readRDS("processed/IPSL_ocean_temp_array_CCscenario_126.RDS")
+other_params(params_IPSL_ssp5rcp85)$ocean_temp <- readRDS("processed/IPSL_ocean_temp_array_CCscenario_585.RDS")
 
 # Attach plankton
-other_params(params_IPSL_picontrol)$n_pp_array <- readRDS("~/RstudioProjects/FISHMIP/data/processed/IPSL_n_pp_array_PIcontrol.RDS")
-other_params(params_IPSL_ssp1rcp26)$n_pp_array <- readRDS("~/RstudioProjects/FISHMIP/data/processed/IPSL_n_pp_array_CCscenario_126.RDS")
-other_params(params_IPSL_ssp5rcp85)$n_pp_array <- readRDS("~/RstudioProjects/FISHMIP/data/processed/IPSL_n_pp_array_CCscenario_585.RDS")
+other_params(params_IPSL_picontrol)$n_pp_array <- readRDS("processed/IPSL_n_pp_array_PIcontrol.RDS")
+other_params(params_IPSL_ssp1rcp26)$n_pp_array <- readRDS("processed/IPSL_n_pp_array_CCscenario_126.RDS")
+other_params(params_IPSL_ssp5rcp85)$n_pp_array <- readRDS("processed/IPSL_n_pp_array_CCscenario_585.RDS")
 
 
 ```
@@ -266,6 +267,107 @@ ggplot(res, aes(x = Year)) +
 # New calibration
 
 Redo previous calibration with temperature 
+
+
+```{r}
+getErrorCustom <- function(vary, params, dat, times, tol = 0.001, 
+    timetorun = 10)
+{
+  params@species_params$R_max[1:9]<-10^vary[1:9]
+  params@species_params$erepro[1:9]<-vary[10:18]
+  params@species_params$interaction_resource[1:9] <- vary[19:27]
+
+  params <- setParams(params)
+
+  interaction <- params@interaction
+  interaction[] <- matrix(vary[28:108],nrow = 9) # stop at 54 if looking only at 3 biggest species
+  
+  params <- setInteraction(params,interaction)
+
+    # params <- projectToSteady(params, distance_func = distanceSSLogN, 
+    #     tol = tol, t_max = length(times), return_sim = F)
+    
+    sim <- project(params,t_max = length(times),t_start = 1950, progress_bar = F,initial_n =  params@initial_n, initial_n_pp = params@other_params$other$n_pp_array[1,])
+    
+ # get biomass through time
+  biomass <- sweep(sim@n, 3, sim@params@w * sim@params@dw, "*")
+  biomass <- biomass[which(dimnames(biomass)$time == "2003"):which(dimnames(biomass)$time == "2020"),,] # trageting fishing period
+  
+  #get yield through time from model:
+  
+  f_gear<-mizer::getFMortGear(params,effort)
+  # f_gear <- f_gear[1:13,,,,drop=F]
+  yield_species_gear <- apply(sweep(f_gear, c(1, 3, 4), biomass, "*"),
+                              c(1, 2, 3), sum)
+  # yield_species_gear
+  
+  yield_species <-apply(yield_species_gear, c(1, 3), sum)
+  
+  yield_frame <- melt(yield_species)
+  
+  # leave out spin up and change units to tonnes    
+  # y<-yield_frame[yield_frame$time >= 1947,]
+  
+  # disregard zeroes - these were NAs only filled in to run the model   
+  
+  obs<-dat$catchT
+  pred<-yield_frame$value[1:18] # only selecting D.ele for now
+  
+  # sum of squared errors, could use  log-scale of predictions and data (could change this or use other error or likelihood options)
+  
+  error <- sum((log(pred[1:13]) - log(obs[1:13]))^2,na.rm=T)
+
+    return(error)
+}
+
+
+
+```
+
+```{r}
+tic()
+dat <- ll_km2
+
+  effort <-array(dat$effort, dim = c(length(dat$effort),1), 
+                 dimnames = list("time" = dat$year, "gear" = params@gear_params$gear[1]))
+
+# create set of params for the optimisation process
+params_optim <- sim@params
+# params_optim@other_params$other$t_idx <- 1  # t_Start doesn't work in project to steady so always starts at 0
+# vary<-c(log10(params_optim@species_params$R_max),
+        # params_optim@species_params$erepro,
+        # params_optim@gear_params$catchability[1])
+
+
+vary<-c(log10(params_optim@species_params$R_max),
+        params_optim@species_params$erepro,
+        params_optim@species_params$interaction_resource,
+        params_optim@interaction)
+
+
+params_optim<-setParams(params_optim)
+# set up workers
+noCores <- parallel::detectCores() - 1 # keep some spare core
+cl <- parallel::makeCluster(noCores, setup_timeout = 0.5)
+setDefaultCluster(cl = cl)
+clusterExport(cl, varlist = "cl",envir=environment())
+clusterEvalQ(cl, {
+  library(mizerExperimental)
+  library(optimParallel)
+})
+optim_result <- optimParallel::optimParallel(par=vary,getErrorCustom,params=params_optim, dat = ll_km2, effort = effort, times = times,
+                                             method   ="L-BFGS-B", 
+                                             lower=c(rep(3,9),rep(1e-10,9),rep(.1,9),rep(.1,81)),
+                                             upper= c(rep(15,9),rep(1,9),rep(.99,9),rep(.99,81)),
+                                             parallel=list(loginfo=TRUE, forward=TRUE))#,
+                                             #plankton_forcing, therMizerEncounter, therMizerPredRate, therMizerEReproAndGrowth, scaled_temp_fun)
+stopCluster(cl)
+
+toc()
+saveRDS(optim_result, file="params/optim_result_temperature.RDS")
+```
+
+
 
 # Predictions
 
@@ -320,4 +422,9 @@ plotDiet2(sim)
 
 meeting tuesday 2 hours 10 to 12
 
+# Plots
+
+6.	%Change in biomass for all species under projections relative to biomass averaged over recent period (2000s?).
+7.	%Change in catches for toothfish under projections relative to biomass averaged over recent period (2000s?).
+8.	%Change in mean body size for all species under projections relative to biomass averaged over recent period (2000s?).
 
