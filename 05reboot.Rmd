@@ -105,6 +105,9 @@ plotBiomassObservedVsModelCustom(params2)
 
 ```
 
+```{r, eval = F}
+saveRDS(params2, file = "params/params11.rds")
+```
 
 Updating the observed biomass and scaling kappa up get us close to a good calibration already ;D
 
