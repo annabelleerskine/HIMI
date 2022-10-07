@@ -178,12 +178,12 @@ clusterEvalQ(cl, {
 optim_result <- optimParallel::optimParallel(par=vary,getErrorCustom,params=params_optim,  
                                              dat = params_optim@species_params$biomass_observed, method ="L-BFGS-B", 
                                              lower=c(rep(3,9),rep(1e-7,9),rep(.01,9),rep(0.01,81)),
-                                             upper= c(rep(15,9),rep(1,9),rep(.99,9),rep(0.99,81)),
+                                             upper= c(rep(15,9),rep(1,9),rep(.69,9),rep(0.99,81)),
                                              parallel=list(loginfo=TRUE, forward=TRUE))
 stopCluster(cl)
 
 toc()
-saveRDS(optim_result, file="params/optim_result_reboot1.RDS")
+saveRDS(optim_result, file="params/optim_result_reboot2.RDS")
 ```
 
 
