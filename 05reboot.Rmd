@@ -122,7 +122,7 @@ tempDat <- as.matrix(rsts_total[,-10]) *1e3
 fqn <- apply(tempDat, 2, quantile, 0.25)
 tqn <- apply(tempDat, 2, quantile, 0.75)
 
-plot_dat <- plotBiomassObservedVsModelCustom(params2, return_data = T)
+plot_dat <- plotBiomassObservedVsModelCustom(sim_optim, return_data = T)
 
 plot_dat$fqn <- fqn
 plot_dat$tqn <- tqn
@@ -201,6 +201,21 @@ params_optim <- setInteraction(params_optim,interaction)
 sim_optim <- project(params_optim, t_max = 2000)
 
 mizer::plotBiomass(sim_optim)
+plotBiomassObservedVsModelCustom(sim_optim)
+plotSpectra(sim_optim)
 ```
+
+Looking good
+
+```{r}
+
+plotGrowthCurves(sim_optim, species_panel = T)
+mizerHowTo::plotDiet2(sim_optim)
+plotFeedingLevel(sim_optim)
+
+sim_optim@params@species_params$interaction_resource
+```
+
+Feeding level is too high, linked to too fast growth. Need to reduce that. Going to try again but with a lower boundary for interaction resource
 
 
