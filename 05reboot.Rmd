@@ -151,6 +151,11 @@ ggplot(plot_dat, aes(x = observed, y = model,color = species)) +
 Need to rerun optim to get the biomass within the quantiles
 
 ```{r}
+params2 <- readRDS("params/params11.rds")
+```
+
+
+```{r}
 # create set of params for the optimisation process
 tic()
 params_optim <- params2
@@ -179,9 +184,23 @@ stopCluster(cl)
 
 toc()
 saveRDS(optim_result, file="params/optim_result_reboot1.RDS")
-optim_result <- readRDS("params/optim_result_reboot1.RDS")
 ```
 
 
+```{r}
+optim_result <- readRDS("params/optim_result_reboot1.RDS")
+
+species_params(params_optim)$R_max<-10^optim_result$par[1:9]
+species_params(params_optim)$erepro<-optim_result$par[10:18]
+species_params(params_optim)$interaction_resource<-optim_result$par[19:27]
+
+interaction <- params_optim@interaction
+interaction[] <- matrix(vary[28:108],nrow = 9) 
+params_optim <- setInteraction(params_optim,interaction)
+
+sim_optim <- project(params_optim, t_max = 2000)
+
+mizer::plotBiomass(sim_optim)
+```
 
 
