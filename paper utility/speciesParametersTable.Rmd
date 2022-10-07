@@ -1,0 +1,21 @@
+---
+title: species table
+author: RF
+output:
+  word_document
+---
+
+```{r}
+
+species_df <- readRDS("species_df.RDS")
+species_df <- species_df[,-12]
+rownames(species_df) <- NULL
+species_df$k_vb <- round(species_df$k_vb,2)
+species_df$w_inf <- round(species_df$w_inf,2)
+species_df$w_mat <- round(species_df$w_mat,2)
+species_df$l_mat <- round(species_df$l_mat,2)
+
+
+knitr::kable(species_df, caption = "Species' parameters")
+```
+

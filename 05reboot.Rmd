@@ -1,0 +1,184 @@
+---
+title: doing the same calibration but better
+author: RF
+output:
+  html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r}
+library(terra)
+library(tidyverse)
+library(mizer)
+library(mizerExperimental)
+library(therMizer)
+library(parallel)
+library(tictoc)
+source("functions.R")
+
+load("inputs/size_spec_inputs.RData")
+```
+
+
+# The data
+
+I have two datasets. The biomass survey is RSTS data which is kg of species per area surveyed (effort column in km2). The longlines concerns the toothfish only and is in number of hooks (effort) and catches in tonnes. The data for the longline is for the whole area whereas the survey is per km2. The first step is to get everything to the same scale, in our case, the whole studied area.
+
+# The studied area
+
+Nicole sent an HIMI mask that I can use to get the total surface area
+
+```{r}
+HIMI_shape<-sf::st_read("HIMI_Mask//HIMI_EEZ_polygon/HIMI_EEZ_polygon.shp") # the shape file of the area
+plot(HIMI_shape)
+HIMI_area <- sf::st_area(HIMI_shape)
+```
+
+The surface area in km2 is
+
+```{r}
+
+total_area <- as.numeric(HIMI_area)/1e6
+total_area
+
+```
+
+Now I need the fraction of surveyed area compared to the total area. This will allow me to model the shallows area with the juveniles within the bigger area.
+
+The details of the area surveyed is in Area_surveyed.Rdata
+
+```{r}
+
+load("inputs/Area_surveyed.RData")
+
+```
+
+
+Now I can estimate the biomass for each species each year in the whole shallows. Hopefully, the sizes not caught by the survey but modelled by Mizer will match well what happens outside of the shallows
+
+
+```{r}
+
+rsts_total <- rsts_trends[,-(1:2)] * year_tot[3:16,]$tot_area / rsts_trends$Effort
+
+rsts_total$year <- rsts_trends$Year
+
+saveRDS(rsts_total, file = "inputs/rsts_total.rds")
+```
+
+
+Need to re-calibrate the model with these values. Are they more or less constant?
+
+```{r}
+
+plot_dat <- reshape2::melt(rsts_total)
+plot_dat$year <- as.numeric(plot_dat$year)
+
+ggplot(plot_dat) +
+  geom_line(aes(x = year, y = value, color = variable)) +
+  facet_wrap(~variable, scales = "free") +
+  scale_y_continuous(trans = "log10")
+
+```
+
+Big no. Let's average the values for the calibration and plot standard deviation on the final plot
+
+# Biomass calibration
+
+The latest saved param object is params10
+
+
+```{r}
+
+sim1 <- readRDS("params/params10.RDS")
+sim1@params@gear_params$initial_effort <- 0
+sim1@params@species_params$biomass_observed <- apply(rsts_total[,-10], 2, mean) * 1e3 # the survey values are in kg, converting to g
+
+sim1 <- project(sim1@params)
+plotBiomass(sim1)
+plotBiomassObservedVsModelCustom(sim1)
+
+params2 <- calibrateBiomassCustom(sim1@params)
+plotBiomassObservedVsModelCustom(params2)
+
+
+```
+
+
+Updating the observed biomass and scaling kappa up get us close to a good calibration already ;D
+
+Improving the plot
+
+
+
+```{r}
+
+tempDat <- as.matrix(rsts_total[,-10]) *1e3
+
+fqn <- apply(tempDat, 2, quantile, 0.25)
+tqn <- apply(tempDat, 2, quantile, 0.75)
+
+plot_dat <- plotBiomassObservedVsModelCustom(params2, return_data = T)
+
+plot_dat$fqn <- fqn
+plot_dat$tqn <- tqn
+
+ggplot(plot_dat, aes(x = observed, y = model,color = species)) +
+  geom_point(size = 3) +
+  geom_errorbar(aes(ymin = fqn, ymax = tqn)) +
+  geom_abline(aes(intercept = 0, slope = 1), colour = "purple", 
+              linetype = "dashed", size = 1.3) +
+  coord_cartesian(ylim = range(plot_dat$model, plot_dat$observed)) +
+  scale_x_continuous(trans = "log10") +
+  scale_y_continuous(trans = "log10") +
+  scale_colour_manual(values = getColours(params2)[plot_dat$species]) + 
+  ggrepel::geom_label_repel(aes(label = species), box.padding = 0.35, 
+                            point.padding = 0.5, segment.color = "grey50", 
+                            show.legend = FALSE, max.overlaps = Inf, seed = 42)
+
+
+
+
+
+
+```
+
+
+Need to rerun optim to get the biomass within the quantiles
+
+```{r}
+# create set of params for the optimisation process
+tic()
+params_optim <- params2
+
+vary<-c(log10(params_optim@species_params$R_max),
+        params_optim@species_params$erepro,
+        params_optim@species_params$interaction_resource,
+        params_optim@interaction)
+
+params_optim<-setParams(params_optim)
+# set up workers
+noCores <- parallel::detectCores() - 1 # keep some spare core
+cl <- parallel::makeCluster(noCores, setup_timeout = 0.5)
+setDefaultCluster(cl = cl)
+clusterExport(cl, varlist = "cl",envir=environment())
+clusterEvalQ(cl, {
+  library(mizerExperimental)
+  library(optimParallel)
+})
+optim_result <- optimParallel::optimParallel(par=vary,getErrorCustom,params=params_optim,  
+                                             dat = params_optim@species_params$biomass_observed, method ="L-BFGS-B", 
+                                             lower=c(rep(3,9),rep(1e-7,9),rep(.01,9),rep(0.01,81)),
+                                             upper= c(rep(15,9),rep(1,9),rep(.99,9),rep(0.99,81)),
+                                             parallel=list(loginfo=TRUE, forward=TRUE))
+stopCluster(cl)
+
+toc()
+saveRDS(optim_result, file="params/optim_result_reboot1.RDS")
+optim_result <- readRDS("params/optim_result_reboot1.RDS")
+```
+
+
+
+

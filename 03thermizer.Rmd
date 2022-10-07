@@ -1,0 +1,1163 @@
+---
+title: toothfish project
+author: RF
+output:
+  html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r}
+library(tidyverse)
+library(mizer)
+library(mizerExperimental)
+library(mizerHowTo)
+library(therMizer)
+library(parallel)
+library(tictoc)
+load("inputs/size_spec_inputs.RData")
+```
+
+
+# Helpful functions
+
+```{r}
+# Calculate the temperature scaling factor for the encounter rate and 
+# predation rate
+scaled_temp_fun <- function(params, t) {
+    # Using t+1 to avoid calling ocean_temp[0,] at the first time step
+
+  # print("model time")
+  # print(t)
+  # print("adjusted time")
+  # print(t + params@other_params$other$t_idx)
+  # print("temperature")
+  # print(other_params(params)$ocean_temp)
+    if(t == 0) temp_at_t <- other_params(params)$ocean_temp[t + 1,]
+    else temp_at_t <- other_params(params)$ocean_temp[t + params@other_params$other$t_idx,]
+
+    # print("temperature in scaled_temp")
+    # print(temp_at_t)
+    
+    # Calculate unscaled temperature effect using a generic polynomial rate equation
+    unscaled_temp_effect <- 
+        temp_at_t * (temp_at_t - species_params(params)$temp_min) * 
+        (species_params(params)$temp_max - temp_at_t)
+    
+    # Scale using new parameter
+    scaled_temp_effect <- 
+        unscaled_temp_effect / species_params(params)$encounterpred_scale
+    # print("intermediate temp effect")
+    # print(scaled_temp_effect)
+    # Set temperature effect to 0 if temperatures are outside thermal 
+    # tolerance limits
+    above_max <- temp_at_t > species_params(params)$temp_max
+    below_min <- temp_at_t < species_params(params)$temp_min
+    scaled_temp_effect[above_max | below_min] = 0
+    
+    # print("temp effect")
+    # print(scaled_temp_effect)
+    
+    return(scaled_temp_effect)
+}
+
+
+therMizerEncounter <- function(params, t, ...) {
+    
+      # Calculate maximum possible encounter rate
+      max_encounter <- mizerEncounter(params, t, ...)
+      
+      # Apply temperature effect
+      return(max_encounter * scaled_temp_fun(params, t))
+      
+}
+
+therMizerPredRate <- function(params, t, ...) {
+      # Calculate maximum possible encounter rate
+      max_predrate <- mizerPredRate(params, t, ...)
+      # print("predrate")
+      # print(max_predrate)
+      # Apply temperature effect
+      return(max_predrate * scaled_temp_fun(params, t))
+      
+}
+
+
+therMizerEReproAndGrowth <- function(params, t, encounter, feeding_level, ...) {
+    
+  # print("t")
+  # print(t)
+  # print("emcounter")
+  # print(encounter)
+  # print("feeding")
+  # print(feeding_level)
+  
+    # Using t+1 to avoid calling ocean_temp[0,] at the first time step
+    temp_at_t <- other_params(params)$ocean_temp[t + params@other_params$other$t_idx,]
+  
+    # Arrhenius equation
+    unscaled_temp_effect <- (exp(25.22 - (0.63/((8.62e-5)*(273 + temp_at_t)))))
+    
+    # Arrhenius equation scaled to a value between 0 and 1
+    temp_effect_metabolism <- 
+        (unscaled_temp_effect - species_params(params)$metab_min) /
+        species_params(params)$metab_range
+    
+    # Set temperature effect to 0 if temperatures are outside thermal 
+    # tolerance limits
+    above_max <- temp_at_t > species_params(params)$temp_max
+    below_min <- temp_at_t < species_params(params)$temp_min
+    temp_effect_metabolism[above_max | below_min] = 0
+  
+  # Apply scaled Arrhenius value to metabolism
+    sweep((1 - feeding_level) * encounter, 1,
+          species_params(params)$alpha, "*", check.margin = FALSE) - 
+        metab(params)*temp_effect_metabolism  
+      
+}
+
+# Set up new resource forcing "function" - just changes to different time slot in the n_pp_array array
+plankton_forcing <- function(params, t, ...) {
+  w_cut_off <- 10
+  pkt <- 10^(other_params(params)$n_pp_array[t + params@other_params$other$t_idx,])/params@dw_full # converting to density
+  pkt[which(as.numeric(names(pkt)) >= w_cut_off)] <- 0
+  
+  return(pkt)  
+}
+
+plotDiet2 <- function (sim, species = NULL, xlim = c(1, NA), returnData = F) 
+{
+  params <- sim@params
+  diet <- getDiet(params)
+  plot_dat <- melt(diet)
+  plot_dat <- plot_dat[plot_dat$value > 0, ]
+  colnames(plot_dat) <- c("Predator", "size", "Prey", 
+                          "Proportion")
+  legend_levels <- intersect(names(params@linecolour), unique(plot_dat$Prey))
+  if (is.null(species)) 
+    p <- ggplot(plot_dat) + facet_wrap(. ~ Predator, scales = "free")
+  else p <- ggplot(filter(plot_dat, Predator == species))
+  p <- p + 
+    geom_area(aes(x = size, y = Proportion, fill = Prey)) + 
+    scale_x_continuous(limits = c(1, NA), name = "Size [g]", trans = "log10") + 
+    scale_fill_manual(values = sim@params@linecolour[legend_levels]) + 
+    theme(legend.position = "right", 
+          legend.key = element_rect(fill = "white"), 
+          panel.background = element_blank(),
+          panel.grid.minor = element_line(color = "gray"), 
+          strip.background = element_blank())
+  if (returnData) 
+    return(plot_dat)
+  else return(p)
+}
+```
+
+# equation for fisheries yield
+
+$$yield = catchability\cdot selectivity \cdot effort \cdot biomass   $$
+
+
+# Setting up params objects
+
+The ecosystem is calibrated and the time series to force planktong and temperature are ready. Time to combine everything.
+
+Loading params without any temperature so easy to edit with block below
+
+```{r}
+sim <- readRDS("params/params10.RDS")
+params <- sim@params
+first_year <- 1950
+last_year <- 2093
+times <- seq(first_year,last_year, by = 1)
+
+## Setting up temperature range
+
+species_params(params)$temp_min <- c(1.8,-1.1,1.3,1.3,-0.1,-1.8,1.4,1.8,1.6) # fishbase
+# species_params(params)$temp_min <- c(1.4,-1.1,1.3,1.3,-0.1,-1.8,1.4,1.4,1.4) # adjusted so species survive historical temperatures
+
+# species_params(params)$temp_max <- c(8.8,2.9,2.5,2.8,1.4,2,2.3,3.1,3.9) #fishbase
+species_params(params)$temp_max <-   c(8.8,2.9,2.5,2.8,2.4,2.4,2.3,3.1,3.9) # adjusted
+
+
+## Time index
+other_params(params)$t_idx = -1949 # temperature array starts at 1950 so any time generated by the effort array will match the rownumber of the temperature array
+
+## Create parameter for scaling encounter and mortality rates so scalar is always between 0 and 1
+species_params(params)$encounterpred_scale <- 
+    rep(NA, nrow(species_params(params)))
+
+for (indv in seq(1:length(species_params(params)$temp_min))) {
+    
+    # Create a vector of all temperatures each species might encounter
+    temperature <- seq(species_params(params)$temp_min[indv], 
+                       species_params(params)$temp_max[indv], 
+                       by = 0.1)
+    
+    # Find the maximum value of the unscaled effect of temperature on encounter
+    # and predation rate for each species 
+  species_params(params)$encounterpred_scale[indv] <- 
+      max((temperature) * 
+              (temperature - species_params(params)$temp_min[indv]) *
+              (species_params(params)$temp_max[indv] - temperature)
+          )
+}
+
+## Determine the minimum, maximum, and range of value for the effect of 
+# temperature on metabolism
+    
+min_metab_value <- 
+    (exp(25.22 - (0.63/((8.62e-5)*(273 + species_params(params)$temp_min)))))
+max_metab_value <- 
+    (exp(25.22 - (0.63/((8.62e-5)*(273 + species_params(params)$temp_max)))))
+    
+species_params(params)$metab_min <- min_metab_value
+species_params(params)$metab_range <- max_metab_value - min_metab_value
+
+```
+
+
+Set the new rate functions and new resource
+
+```{r}
+
+params <- setRateFunction(params, "Encounter", "therMizerEncounter")
+params <- setRateFunction(params, "PredRate", "therMizerPredRate")
+params <- setRateFunction(params, "EReproAndGrowth", "therMizerEReproAndGrowth")
+
+params <- setResource(params, resource_dynamics = "plankton_forcing")
+
+```
+Adding fisheries to the mix
+
+```{r}
+
+ll_area_yr <- read_csv("ll_area_yr.csv")
+
+ll_trends <- cbind(ll_trends,ll_area_yr[-dim(ll_area_yr)[1],3])
+
+ll_km2 <- data.frame("year" = ll_trends$Year, "effort" = ll_trends$Effort/ll_trends$area_km,
+                     "catchT" = ll_trends$CatchT / ll_trends$area_km)
+ll_km2$catchT <- ll_km2$catchT * 1e6 #in grams
+ll_avg <- mean(ll_km2$catchT)
+effort_avg <-mean(ll_km2$effort)
+
+effort <-array(ll_km2$effort, dim = c(length(ll_km2$effort),1), 
+                 dimnames = list("time" = ll_km2$year, "gear" = params@gear_params$gear[1]))
+
+```
+
+
+divide ll_effort and catch by total area to get effort and catch per km2. the total area is from the mask in FISHMIP folder
+
+
+Set the scenarios
+
+```{r}
+
+# Create parameter objects
+params_IPSL_picontrol <- params
+params_IPSL_ssp1rcp26 <- params
+params_IPSL_ssp5rcp85 <- params
+
+# Attach temperature
+other_params(params_IPSL_picontrol)$ocean_temp <- readRDS("~/RstudioProjects/FISHMIP/data/processed/IPSL_ocean_temp_array_PIcontrol.RDS")
+other_params(params_IPSL_ssp1rcp26)$ocean_temp <- readRDS("~/RstudioProjects/FISHMIP/data/processed/IPSL_ocean_temp_array_CCscenario_126.RDS")
+other_params(params_IPSL_ssp5rcp85)$ocean_temp <- readRDS("~/RstudioProjects/FISHMIP/data/processed/IPSL_ocean_temp_array_CCscenario_585.RDS")
+
+# Attach plankton
+other_params(params_IPSL_picontrol)$n_pp_array <- readRDS("~/RstudioProjects/FISHMIP/data/processed/IPSL_n_pp_array_PIcontrol.RDS")
+other_params(params_IPSL_ssp1rcp26)$n_pp_array <- readRDS("~/RstudioProjects/FISHMIP/data/processed/IPSL_n_pp_array_CCscenario_126.RDS")
+other_params(params_IPSL_ssp5rcp85)$n_pp_array <- readRDS("~/RstudioProjects/FISHMIP/data/processed/IPSL_n_pp_array_CCscenario_585.RDS")
+
+
+```
+
+
+
+
+```{r}
+sim <- project(params_IPSL_ssp1rcp26, effort = effort)
+```
+
+simulation using historical data works well, picontrol doesn't
+
+
+```{r}
+
+mizer::plotBiomass(sim)
+mizer::plotSpectra(sim)
+
+```
+
+
+```{r}
+res <- mizer::plotYield(sim,return_data = T)
+res$ObservedYield <- ll_km2$catchT
+
+ggplot(res, aes(x = Year)) +
+  geom_line(aes(y = Yield)) +
+  geom_line(aes(y = ObservedYield), color = "red")
+```
+
+
+# New calibration
+
+Redo previous calibration with temperature 
+
+
+```{r}
+getErrorCustom <- function(vary, params, dat, times, tol = 0.001, 
+    timetorun = 10)
+{
+  # params@species_params$R_max[1:9]<-10^vary[1:9]
+  # params@species_params$erepro[1:9]<-vary[10:18]
+  # params@species_params$interaction_resource[1:9] <- vary[19:27]
+  # 
+  # params <- setParams(params)
+  # 
+  # interaction <- params@interaction
+  # interaction[] <- matrix(vary[28:108],nrow = 9) # stop at 54 if looking only at 3 biggest species
+  # 
+  # params <- setInteraction(params,interaction)
+  
+  params@species_params$erepro[1] <- vary
+
+    # params <- projectToSteady(params, distance_func = distanceSSLogN, 
+    #     tol = tol, t_max = length(times), return_sim = F)
+    
+    sim <- project(params,t_max = length(times),t_start = 1950, progress_bar = F,initial_n =  params@initial_n, initial_n_pp = params@other_params$other$n_pp_array[1,])
+    
+ # get biomass through time
+  biomass <- sweep(sim@n, 3, sim@params@w * sim@params@dw, "*")
+  biomass <- biomass[which(dimnames(biomass)$time == "2003"):which(dimnames(biomass)$time == "2020"),,] # trageting fishing period
+  
+  #get yield through time from model:
+  
+  f_gear<-mizer::getFMortGear(params,effort)
+  # f_gear <- f_gear[1:13,,,,drop=F]
+  yield_species_gear <- apply(sweep(f_gear, c(1, 3, 4), biomass, "*"),
+                              c(1, 2, 3), sum)
+  # yield_species_gear
+  
+  yield_species <-apply(yield_species_gear, c(1, 3), sum)
+  
+  yield_frame <- melt(yield_species)
+  
+  # leave out spin up and change units to tonnes    
+  # y<-yield_frame[yield_frame$time >= 1947,]
+  
+  # disregard zeroes - these were NAs only filled in to run the model   
+  
+  obs<-dat$catchT
+  pred<-yield_frame$value[1:18] # only selecting D.ele for now
+  
+  # sum of squared errors, could use  log-scale of predictions and data (could change this or use other error or likelihood options)
+  
+  error <- sum((log(pred[1:13]) - log(obs[1:13]))^2,na.rm=T)
+  
+plot_dat <- data.frame(obs,pred)
+plot_dat$Year <- 2003:2020
+
+p <- ggplot(plot_dat, aes(x = Year)) +
+  geom_line(aes(y = pred)) +
+  geom_line(aes(y = obs), color = "red")
+print(p)
+
+p2 <- mizer::plotBiomass(sim)
+print(p2)
+    return(error)
+}
+
+
+
+```
+
+```{r}
+tic()
+dat <- ll_km2
+
+  effort <-array(dat$effort, dim = c(length(dat$effort),1), 
+                 dimnames = list("time" = dat$year, "gear" = params@gear_params$gear[1]))
+
+# create set of params for the optimisation process
+params_optim <- sim@params
+# params_optim@other_params$other$t_idx <- 1  # t_Start doesn't work in project to steady so always starts at 0
+# vary<-c(log10(params_optim@species_params$R_max),
+        # params_optim@species_params$erepro,
+        # params_optim@gear_params$catchability[1])
+
+
+# vary<-c(log10(params_optim@species_params$R_max),
+#         params_optim@species_params$erepro,
+#         params_optim@species_params$interaction_resource,
+#         params_optim@interaction)
+
+vary <- params_optim@species_params$erepro
+
+
+params_optim<-setParams(params_optim)
+# set up workers
+noCores <- parallel::detectCores() - 1 # keep some spare core
+cl <- parallel::makeCluster(noCores, setup_timeout = 0.5)
+setDefaultCluster(cl = cl)
+clusterExport(cl, varlist = "cl",envir=environment())
+clusterEvalQ(cl, {
+  library(mizerExperimental)
+  library(optimParallel)
+})
+optim_result <- optimParallel::optimParallel(par=vary,getErrorCustom,params=params_optim, dat = ll_km2, effort = effort, times = times,
+                                             method   ="L-BFGS-B", 
+                                             lower=c(rep(3,9),rep(1e-10,9),rep(.1,9),rep(.1,81)),
+                                             upper= c(rep(15,9),rep(1,9),rep(.99,9),rep(.99,81)),
+                                             parallel=list(loginfo=TRUE, forward=TRUE),
+                                             plankton_forcing, therMizerEncounter, therMizerPredRate, therMizerEReproAndGrowth, scaled_temp_fun)
+stopCluster(cl)
+
+toc()
+saveRDS(optim_result, file="params/optim_result_temperature.RDS")
+```
+
+Not working, doing it manually
+
+
+```{r}
+params_optim <- sim@params
+
+tempParams <- params_optim
+
+tempParams@species_params$erepro[1] <- vary <- params_optim@species_params$erepro[1]*10
+sim <- project(tempParams,t_max = length(times),t_start = 1950, progress_bar = F,initial_n =  tempParams@initial_n, initial_n_pp = tempParams@other_params$other$n_pp_array[1,])
+mizer::plotBiomass(sim)
+
+
+res <- getErrorCustom(params = params_optim,vary = vary,dat = ll_km2,times = times)
+
+res
+```
+
+Can't get yield to match post 2015
+Decreasing erepro scaled down the entire curve but keep same profile
+Increasing erepro doesn't change anything
+
+The drop is due to something else. Preys?
+
+
+# Predictions
+
+Constant effort
+
+
+```{r}
+
+effort_cst <- array(data = c(effort,rep(effort[13],(2093-2002-18))), dim = c(2093-2002,1), dimnames = list("time" = 2003:2093, "gear" = "longline"))
+
+sim <- project(params_IPSL_ssp1rcp26, effort = effort_cst)
+
+mizer::plotBiomass(sim)
+mizer::plotSpectra(sim)
+
+res <- mizer::plotYield(sim,return_data = T)
+res$ObservedYield <- c(ll_km2$catchT, rep(NA,(2093-2002-18)))
+
+ggplot(res, aes(x = Year)) +
+  geom_line(aes(y = Yield)) +
+  geom_line(aes(y = ObservedYield), color = "red")
+
+```
+
+No fishing
+
+```{r}
+
+
+sim <- project(params_IPSL_ssp1rcp26, 
+               initial_n_pp = params_IPSL_ssp1rcp26@other_params$other$n_pp_array[1,],
+                                      t_max = length(times),t_start = 1950)
+
+mizer::plotBiomass(sim)
+mizer::plotSpectra(sim, time_range = 2045)
+
+
+```
+
+```{r}
+
+
+sim <- project(params_IPSL_ssp5rcp85, 
+               initial_n_pp = params_IPSL_ssp5rcp85@other_params$other$n_pp_array[1,],
+                                      t_max = length(times),t_start = 1950)
+
+mizer::plotBiomass(sim)
+mizer::plotSpectra(sim)
+plotDiet2(sim)
+
+```
+
+
+# Plots
+
+6.	%Change in biomass for all species under projections relative to biomass averaged over recent period (2000s?).
+7.	%Change in catches for toothfish under projections relative to biomass averaged over recent period (2000s?).
+8.	%Change in mean body size for all species under projections relative to biomass averaged over recent period (2000s?).
+
+
+```{r}
+myTheme <- function(){
+     theme(
+        legend.key = element_rect(fill = "white"),
+        legend.position = "bottom",
+        panel.background = element_rect(fill = "white", color = "black"),
+        strip.background = element_blank(),
+        panel.grid.minor = element_line(colour = "grey92"))
+}
+
+fig_width = 15
+fig_height =10
+```
+
+
+
+### ssp126
+
+calculating average biomass for each species from 2000 to 2009
+
+```{r}
+
+sim <- project(params_IPSL_ssp1rcp26,initial_n_pp = params_IPSL_ssp1rcp26@other_params$other$n_pp_array[1,],
+                                      t_max = 10,t_start = 2000)
+
+biomass <- mizer::plotBiomass(sim, return_data = T)
+biom_avg <- NULL
+for(iSpecies in sim@params@species_params$species){
+  temp <- filter(biomass, Species == iSpecies)
+  
+  biom_avg <- rbind(biom_avg, mean(temp$Biomass))
+}
+
+biom_avg <- data.frame(Species = sim@params@species_params$species, biomass = biom_avg)
+
+```
+
+Projecting scenario in time
+
+```{r}
+
+
+sim <- project(params_IPSL_ssp1rcp26,initial_n_pp = params_IPSL_ssp1rcp26@other_params$other$n_pp_array[1,],
+                                      t_max = length(times),t_start = 1950)
+
+biomass <- mizer::getBiomass(sim)
+
+biomass_relative <- apply(biomass,1,FUN = function(x){x/biom_avg$biomass})
+
+plot_dat <- reshape2::melt(biomass_relative)
+colnames(plot_dat)[1] <- "Species"
+
+
+p1 <- ggplot(plot_dat)+
+  geom_line(aes(x = time, y = value, color = Species, size = Species)) +
+  scale_y_continuous("Proportional change in biomass") +
+  scale_x_continuous("Time in years") +
+  geom_hline(yintercept = 1, linetype = "dashed") +
+  scale_color_manual(values = params_IPSL_ssp5rcp85@linecolour[1:9]) +
+  scale_size_manual(values = c(2,rep(.8,8)))+
+  myTheme()
+p1
+
+ggsave(p1, file = "figures/biomass26.png", units = "cm", width = fig_width, height = fig_height)
+```
+
+
+Yield when assuming constant effort (2015) onwards
+
+```{r}
+effort_cst <- array(data = c(effort,rep(effort[13],(2093-2002-18))), dim = c(2093-2002,1), dimnames = list("time" = 2003:2093, "gear" = "longline"))
+
+sim <- project(params_IPSL_ssp1rcp26, effort = effort_cst)
+
+mizer::plotBiomass(sim)
+mizer::plotSpectra(sim)
+
+res <- mizer::plotYield(sim,return_data = T)
+res$ObservedYield <- c(ll_km2$catchT, rep(NA,(2093-2002-18)))
+
+ggplot(res, aes(x = Year)) +
+  geom_line(aes(y = Yield)) +
+  geom_line(aes(y = ObservedYield), color = "red")
+```
+
+
+Yield relative change to average 2000-2009
+
+```{r}
+
+sim <- project(params_IPSL_ssp1rcp26,initial_n_pp = params_IPSL_ssp1rcp26@other_params$other$n_pp_array[1,],
+                                      t_max = 91,t_start = 2003)
+
+yield <- mizer::getYield(sim)
+yield_avg <- mean(yield[,1])
+
+
+```
+
+
+Projecting in time
+
+```{r}
+
+sim <- project(params_IPSL_ssp1rcp26,initial_n_pp = params_IPSL_ssp1rcp26@other_params$other$n_pp_array[1,],
+                                      effort = effort_cst)
+
+yield <- mizer::getYield(sim)
+
+yield_relative <-yield[,1]/yield_avg
+
+plot_dat <- data.frame(Year = as.numeric(names(yield_relative)), yield = yield_relative)
+
+
+p2 <- ggplot(plot_dat)+
+  geom_line(aes(x = Year, y = yield)) +
+  geom_hline(yintercept = 1, linetype = "dashed")
+p2
+
+
+```
+
+
+mean body size - 2003-2012 (including fisheries)
+using getMeanWeigth that does sum biomass / sum numbers
+
+```{r}
+
+mean_size <- NULL
+for(iSpecies in sim@params@species_params$species){
+  
+  temp <- mizer::getMeanWeight(sim,species = iSpecies)
+  mean_size <- cbind(mean_size,temp)
+}
+
+colnames(mean_size) <- sim@params@species_params$species
+
+mean_size_avg <- apply(mean_size[1:10,],2,mean)
+
+relative_size <- sweep(mean_size,2,mean_size_avg,"/")
+
+plot_dat <- reshape2::melt(relative_size)
+colnames(plot_dat) <- c("Year", "Species", "mean_size")
+
+
+p3 <- ggplot(plot_dat)+
+  geom_line(aes(x = Year, y = mean_size, color = Species, size = Species)) +
+    scale_y_continuous(name = "Proportional change in mean body size") +
+  scale_x_continuous("Time in years") +
+  geom_hline(yintercept = 1, linetype = "dashed") +
+  scale_color_manual(values = params_IPSL_ssp5rcp85@linecolour[1:9]) +
+  scale_size_manual(values = c(2,rep(.8,8)))+
+  myTheme()
+p3
+
+ggsave(p3, file = "figures/meanSize26.png", units = "cm", width = fig_width, height = fig_height)
+
+```
+
+### ssp585
+
+calculating average biomass for each species from 2000 to 2009
+
+```{r}
+
+sim <- project(params_IPSL_ssp5rcp85,initial_n_pp = params_IPSL_ssp5rcp85@other_params$other$n_pp_array[1,],
+                                      t_max = 10,t_start = 2000)
+
+biomass <- mizer::plotBiomass(sim, return_data = T)
+biom_avg <- NULL
+for(iSpecies in sim@params@species_params$species){
+  temp <- filter(biomass, Species == iSpecies)
+  
+  biom_avg <- rbind(biom_avg, mean(temp$Biomass))
+}
+
+biom_avg <- data.frame(Species = sim@params@species_params$species, biomass = biom_avg)
+
+```
+
+Projecting scenario in time
+
+```{r}
+
+
+sim <- project(params_IPSL_ssp5rcp85,initial_n_pp = params_IPSL_ssp5rcp85@other_params$other$n_pp_array[1,],
+                                      t_max = length(times),t_start = 1950)
+
+biomass <- mizer::getBiomass(sim)
+
+biomass_relative <- apply(biomass,1,FUN = function(x){x/biom_avg$biomass})
+
+plot_dat <- reshape2::melt(biomass_relative)
+colnames(plot_dat)[1] <- "Species"
+
+
+p4 <- ggplot(plot_dat)+
+  geom_line(aes(x = time, y = value, color = Species, size = Species)) +
+  scale_y_continuous("Proportional change in biomass") +
+  scale_x_continuous("Time in years") +
+  geom_hline(yintercept = 1, linetype = "dashed") +
+  scale_color_manual(values = params_IPSL_ssp5rcp85@linecolour[1:9]) +
+  scale_size_manual(values = c(2,rep(.8,8)))+
+  myTheme()
+p4
+
+ggsave(p4, file = "figures/biomass85.png", units = "cm", width = fig_width, height = fig_height)
+
+```
+
+
+Yield when assuming constant effort (2015) onwards
+
+```{r}
+effort_cst <- array(data = c(effort,rep(effort[13],(2093-2002-18))), dim = c(2093-2002,1), dimnames = list("time" = 2003:2093, "gear" = "longline"))
+
+sim <- project(params_IPSL_ssp5rcp85, effort = effort_cst)
+
+mizer::plotBiomass(sim)
+mizer::plotSpectra(sim)
+
+res <- mizer::plotYield(sim,return_data = T)
+res$ObservedYield <- c(ll_km2$catchT, rep(NA,(2093-2002-18)))
+
+ggplot(res, aes(x = Year)) +
+  geom_line(aes(y = Yield)) +
+  geom_line(aes(y = ObservedYield), color = "red")
+```
+
+
+Yield relative change to average 2000-2009
+
+```{r}
+
+sim <- project(params_IPSL_ssp5rcp85,initial_n_pp = params_IPSL_ssp5rcp85@other_params$other$n_pp_array[1,],
+                                      t_max = 91,t_start = 2003)
+
+yield <- mizer::getYield(sim)
+yield_avg <- mean(yield[,1])
+
+
+```
+
+
+Projecting in time
+
+```{r}
+
+sim <- project(params_IPSL_ssp5rcp85,initial_n_pp = params_IPSL_ssp5rcp85@other_params$other$n_pp_array[1,],
+                                      effort = effort_cst)
+
+yield <- mizer::getYield(sim)
+
+yield_relative <-yield[,1]/yield_avg
+
+plot_dat <- data.frame(Year = as.numeric(names(yield_relative)), yield = yield_relative)
+
+
+p5 <- ggplot(plot_dat)+
+  geom_line(aes(x = Year, y = yield)) +
+  geom_hline(yintercept = 1, linetype = "dashed")
+
+p5
+
+```
+
+
+mean body size - 2003-2012 (including fisheries)
+using getMeanWeigth that does sum biomass / sum numbers
+
+```{r}
+
+mean_size <- NULL
+for(iSpecies in sim@params@species_params$species){
+  
+  temp <- mizer::getMeanWeight(sim,species = iSpecies)
+  mean_size <- cbind(mean_size,temp)
+}
+
+colnames(mean_size) <- sim@params@species_params$species
+
+mean_size_avg <- apply(mean_size[1:10,],2,mean)
+
+relative_size <- sweep(mean_size,2,mean_size_avg,"/")
+
+plot_dat <- reshape2::melt(relative_size)
+colnames(plot_dat) <- c("Year", "Species", "mean_size")
+
+
+p6 <- ggplot(plot_dat)+
+  geom_line(aes(x = Year, y = mean_size, color = Species, size = Species)) +
+    scale_y_continuous(name = "Proportional change in mean body size") +
+  scale_x_continuous("Time in years") +
+  geom_hline(yintercept = 1, linetype = "dashed") +
+  scale_color_manual(values = params_IPSL_ssp5rcp85@linecolour[1:9]) +
+  scale_size_manual(values = c(2,rep(.8,8)))+
+  myTheme()
+
+p6
+
+ggsave(p6, file = "figures/meanSize85.png", units = "cm", width = fig_width, height = fig_height)
+
+```
+
+
+
+facet of temperature profile per species
+add dots for average historical data (last 20 years) and average increase (last 20 years)
+
+
+
+
+```{r}
+# temperature profile
+
+temp_vec <- seq(-1.5,9,.05)
+scalar <- NULL
+scalarM <- NULL
+
+for(iTemp in temp_vec){
+  
+temp_at_t <- iTemp
+
+# temp_at_t <- temp_at_t + 273
+
+# unscaled_temp_effect <- 
+#   temp_at_t * (temp_at_t - (species_params(params)$temp_min + 273)) * 
+#   (species_params(params)$temp_max - temp_at_t + 273)
+
+unscaled_temp_effect <- 
+  temp_at_t * (temp_at_t - (species_params(params)$temp_min)) * 
+  (species_params(params)$temp_max - temp_at_t)
+
+scaled_temp_effect <- 
+  unscaled_temp_effect / species_params(params)$encounterpred_scale
+
+above_max <- temp_at_t > species_params(params)$temp_max
+below_min <- temp_at_t < species_params(params)$temp_min
+scaled_temp_effect[above_max | below_min] = 0
+# scaled_temp_effect[scaled_temp_effect < 0] = 0
+
+scalar <- rbind(scalar,scaled_temp_effect)
+
+
+    # Arrhenius equation
+    unscaled_temp_effect <- (exp(25.22 - (0.63/((8.62e-5)*(273 + temp_at_t)))))
+    
+    # Arrhenius equation scaled to a value between 0 and 1
+    temp_effect_metabolism <- 
+        (unscaled_temp_effect - species_params(params)$metab_min) /
+        species_params(params)$metab_range
+    
+    # Set temperature effect to 0 if temperatures are outside thermal 
+    # tolerance limits
+    above_max <- temp_at_t > species_params(params)$temp_max
+    below_min <- temp_at_t < species_params(params)$temp_min
+    temp_effect_metabolism[above_max | below_min] = 0
+    
+    scalarM <- rbind(scalarM, temp_effect_metabolism)
+
+}
+
+rownames(scalar) <- temp_vec
+colnames(scalar) <- params@species_params$species
+plot_dat <- reshape2::melt(scalar)
+colnames(plot_dat) <- c("temperature","Species","scalar")
+plot_dat$Type <- "Encounter"
+
+# removing scalar = 0 except at the beginning and end of curve
+zero_keep <- NULL
+zero_val <- which(plot_dat$scalar == 0)
+for(i in 1:(length(zero_val)-1)){
+  if(zero_val[i+1] != zero_val[i] + 1){
+    zero_keep <- c(zero_keep, i, i+1)
+  }
+}
+# zero keep has the position of the row to keep in zero_val
+zero_val <- zero_val[-zero_keep]
+plot_dat <-plot_dat[- zero_val,] 
+
+rownames(scalarM) <- temp_vec
+colnames(scalarM) <- params@species_params$species
+plot_datM <- reshape2::melt(scalarM)
+colnames(plot_datM) <- c("temperature","Species","scalar")
+# plot_datM$scalar[plot_datM$scalar == 0] <- NA
+plot_datM$Type <- "Metabolism"
+
+# removing scalar = 0 except at the beginning of curve
+zero_keep <- NULL
+zero_val <- which(plot_datM$scalar == 0)
+for(i in 1:(length(zero_val)-1)){
+  if(zero_val[i+1] != zero_val[i] + 1){
+    zero_keep <- c(zero_keep, i)
+  }
+}
+# zero keep has the position of the row to keep in zero_val
+zero_val <- zero_val[-zero_keep]
+plot_datM <-plot_datM[- zero_val,] 
+
+plot_dat <- rbind(plot_dat, plot_datM)
+
+# plot_dat[which(plot_dat$scalar == 0),]
+
+plot_dat <- plot_dat[-780,] # for some reason that one value really wants to stay in the df
+
+# points for current and projected temperature
+temperature <- params_IPSL_ssp1rcp26@other_params$other$ocean_temp[,1]
+historical <- mean(temperature[40:60])
+projection <- mean(temperature[124:144])
+scalar <- NULL
+scalarM <- NULL
+for(iTemp in c(historical,projection)){
+  
+temp_at_t <- iTemp
+
+# temp_at_t <- temp_at_t + 273
+
+# unscaled_temp_effect <- 
+#   temp_at_t * (temp_at_t - (species_params(params)$temp_min + 273)) * 
+#   (species_params(params)$temp_max - temp_at_t + 273)
+
+unscaled_temp_effect <- 
+  temp_at_t * (temp_at_t - (species_params(params)$temp_min)) * 
+  (species_params(params)$temp_max - temp_at_t)
+
+scaled_temp_effect <- 
+  unscaled_temp_effect / species_params(params)$encounterpred_scale
+
+above_max <- temp_at_t > species_params(params)$temp_max
+below_min <- temp_at_t < species_params(params)$temp_min
+scaled_temp_effect[above_max | below_min] = 0
+scaled_temp_effect[scaled_temp_effect < 0] = 0
+
+scalar <- rbind(scalar,scaled_temp_effect)
+
+
+    # Arrhenius equation
+    unscaled_temp_effect <- (exp(25.22 - (0.63/((8.62e-5)*(273 + temp_at_t)))))
+    
+    # Arrhenius equation scaled to a value between 0 and 1
+    temp_effect_metabolism <- 
+        (unscaled_temp_effect - species_params(params)$metab_min) /
+        species_params(params)$metab_range
+    
+    # Set temperature effect to 0 if temperatures are outside thermal 
+    # tolerance limits
+    above_max <- temp_at_t > species_params(params)$temp_max
+    below_min <- temp_at_t < species_params(params)$temp_min
+    temp_effect_metabolism[above_max | below_min] = 0
+    
+    scalarM <- rbind(scalarM, temp_effect_metabolism)
+
+}
+
+rownames(scalar) <- c(historical,projection)
+colnames(scalar) <- params@species_params$species
+plot_point <- reshape2::melt(scalar)
+plot_point$Scenario <- c("Historical","Projection")
+colnames(plot_point)[1:3] <- c("temperature","Species","scalar")
+plot_point$Type <- "Encounter"
+
+rownames(scalarM) <- c(historical,projection)
+colnames(scalarM) <- params@species_params$species
+plot_pointM <- reshape2::melt(scalarM)
+plot_pointM$Scenario <- c("Historical","Projection")
+colnames(plot_pointM)[1:3] <- c("temperature","Species","scalar")
+plot_pointM$Type <- "Metabolism"
+
+plot_point <- rbind(plot_point, plot_pointM)
+
+p7 <- ggplot(plot_dat)+
+  geom_line(aes(x = temperature, y = scalar, color = Type)) +
+  geom_point(data = plot_point, aes(x = temperature, y = scalar, shape = Scenario, color = Scenario), size = 2) +
+  scale_x_continuous("Temperature in C")+
+  scale_y_continuous("Scalar value") +
+  facet_wrap(~Species, scales = "free") +
+myTheme() +
+  guides(color=guide_legend(nrow=2,byrow=TRUE), shape = guide_legend(nrow=2,byrow=TRUE)) +
+  scale_color_manual(values = c("dodgerblue","darkgreen","green3","darkorange2"))
+  
+p7
+
+ggsave(p7, file = "figures/tempProfile.png", units = "cm", width = fig_width, height = fig_height)
+
+
+```
+
+Catch predictions of both scenarios
+
+```{r}
+effort_cst <- array(data = c(effort,rep(effort[13],(2093-2002-18))), dim = c(2093-2002,1), dimnames = list("time" = 2003:2093, "gear" = "longline"))
+
+sim85 <- project(params_IPSL_ssp5rcp85, effort = effort_cst)
+res <- mizer::plotYield(sim85,return_data = T)
+res$Scenario <- "SSP8.5"
+sim26 <- project(params_IPSL_ssp1rcp26, effort = effort_cst)
+res26 <- mizer::plotYield(sim26,return_data = T)
+res26$Scenario <- "SSP2.6"
+
+ObservedYield <- data.frame(Year =  2003:2093, Yield =  c(ll_km2$catchT, rep(NA,(2093-2002-18))), Species = "D.ele")
+ObservedYield$Scenario <- "Observed yield"
+
+plot_dat <- rbind(res,res26,ObservedYield)
+plot_dat$Yield <- plot_dat$Yield/1e6 # conversion to tons
+
+p8 <- ggplot(plot_dat) +
+  geom_line(aes(x = Year, y = Yield, color = Scenario)) +
+  scale_x_continuous("Time in years") +
+  scale_y_continuous("Yield in tonnes") +
+  myTheme()
+  
+p8
+
+ggsave(p8, file = "figures/futureCatch.png", units = "cm", width = fig_width, height = fig_height)
+
+```
+
+
+
+Proportional change in n_pp for both scenarios
+
+
+```{r}
+
+
+hist_avg <- apply(sim26@params@other_params$other$n_pp_array[40:60,],2,mean)
+rcp26_avg <- apply(sim26@params@other_params$other$n_pp_array[124:144,],2,mean)
+rcp85_avg <- apply(sim85@params@other_params$other$n_pp_array[124:144,],2,mean)
+
+npp26 <- rcp26_avg/hist_avg
+npp85 <- rcp85_avg/hist_avg
+
+plot_dat <- data.frame(value = c(npp26,npp85), Scenario = c(rep("SSP2.6",209),rep("SSP8.5",209)), Size = rep(as.numeric(names(npp26)),2))
+
+p9 <- ggplot(plot_dat) +
+  geom_line(aes(x = Size, y = value, color = Scenario)) +
+  scale_x_continuous(name = "Size in [g]", trans = "log10") +
+  scale_y_continuous("Proportional change of biomass") +
+  myTheme()
+p9
+
+ggsave(p9, file = "figures/nppChange.png", units = "cm", width = fig_width, height = fig_height)
+
+```
+
+historical diets - pre temperature forcing
+
+```{r}
+sim <- readRDS("params/params10.RDS")
+
+p10 <- plotDiet2(sim, species = "D.ele")
+
+p10
+
+ggsave(p10, file = "figures/diet.png", units = "cm", width = fig_width, height = fig_height)
+
+```
+
+
+
+historical growth - pre temperature forcing
+
+```{r}
+
+sim <- readRDS("params/params6.RDS")
+
+p11 <- plotGrowthCurves(sim, species_panel = T)
+
+p11
+
+ggsave(p11, file = "figures/growth.png", units = "cm", width = fig_width, height = fig_height)
+
+```
+
+
+Preping the panel plots
+
+```{r}
+library(ggpubr)
+```
+
+
+All custom functions are in report2.Rmd
+
+Figure 1 size spectrum and biomass calibration
+```{r}
+# using sim before fishing time series calibration to compare biomass to data using only average fishing
+
+sim21 <- readRDS("params/params9.RDS")
+
+params <- sim21@params
+
+ll_area_yr <- read_csv("ll_area_yr.csv")
+
+ll_trends <- cbind(ll_trends,ll_area_yr[-dim(ll_area_yr)[1],3])
+
+ll_km2 <- data.frame("year" = ll_trends$Year, "effort" = ll_trends$Effort/ll_trends$area_km,
+                     "catchT" = ll_trends$CatchT / ll_trends$area_km)
+ll_km2$catchT <- ll_km2$catchT * 1e6 #in grams
+ll_avg <- mean(ll_km2$catchT)
+effort_avg <-mean(ll_km2$effort)
+
+  effort <-array(ll_km2$effort, dim = c(length(ll_km2$effort),1), 
+                 dimnames = list("time" = ll_km2$year, "gear" = params@gear_params$gear[1]))
+
+params@species_params$yield_observed <- c(ll_avg,rep(0,8))
+
+gear_ll<-data.frame(species = params@species_params$species,
+               gear = "longline",
+               sel_func = "knife_edge",
+               knife_edge_size = 2722 ,
+               catchability = c(7e-7,rep(0,8)),
+               initial_effort = 1)
+
+gear_params(params) <- gear_ll
+initial_effort(params) <- effort_avg # somehow doesn't work with gear_params
+
+sim22 <- project(params, t_max = 200)
+
+plotdat12 <- plotBiomassObservedVsModelCustom(sim22)
+
+plotdat13 <- mizer::plotSpectra(sim22)
+
+p12 <- plotdat12 + myTheme()
+
+p13 <- plotdat13 + myTheme()
+
+p14 <- ggarrange(p13, p12, ncol=2, common.legend = TRUE, legend="bottom", labels = c('A', 'B'))
+
+ggsave(p14, filename = "figures/figure1.png", units = "cm", width = 20, height = 15)
+
+```
+
+
+Figure 2 Growth and diet
+
+```{r}
+
+p10 <- p10 + myTheme()
+p11 <- p11 + myTheme()
+
+p15 <- ggarrange(p10, p11, ncol=2, legend="bottom", labels = c('A', 'B'))
+ggsave(p15, filename = "figures/figure2.png", units = "cm", width = 20, height = 15)
+
+
+```
+
+Figure 6 pannel of relative change
+
+```{r}
+
+p4 <- p4 + scale_y_continuous(name = "")
+p6 <- p6 + scale_y_continuous(name = "")
+
+p16 <- ggarrange(p1, p4, p3, p6, ncol=2, nrow = 2, common.legend = TRUE, legend="bottom", labels = c('A', 'B','C','D'))
+
+ggsave(p16, filename = "figures/figure3.png", units = "cm", width = 20, height = 20)
+
+```
+
