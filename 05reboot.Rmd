@@ -178,28 +178,31 @@ clusterEvalQ(cl, {
 optim_result <- optimParallel::optimParallel(par=vary,getErrorCustom,params=params_optim,  
                                              dat = params_optim@species_params$biomass_observed, method ="L-BFGS-B", 
                                              lower=c(rep(3,9),rep(1e-7,9),rep(.01,9),rep(0.01,81)),
-                                             upper= c(rep(15,9),rep(1,9),rep(.69,9),rep(0.99,81)),
+                                             upper= c(rep(15,9),rep(1,9),rep(.5,9),rep(0.99,81)),
                                              parallel=list(loginfo=TRUE, forward=TRUE))
 stopCluster(cl)
 
 toc()
-saveRDS(optim_result, file="params/optim_result_reboot2.RDS")
+saveRDS(optim_result, file="params/optim_result_reboot3.RDS")
 ```
 
 
 ```{r}
-optim_result <- readRDS("params/optim_result_reboot1.RDS")
+optim_result <- readRDS("params/optim_result_reboot2.RDS")
 
 species_params(params_optim)$R_max<-10^optim_result$par[1:9]
 species_params(params_optim)$erepro<-optim_result$par[10:18]
 species_params(params_optim)$interaction_resource<-optim_result$par[19:27]
 
 interaction <- params_optim@interaction
-interaction[] <- matrix(vary[28:108],nrow = 9) 
+interaction[] <- matrix(optim_result$par[28:108],nrow = 9) 
 params_optim <- setInteraction(params_optim,interaction)
 
 sim_optim <- project(params_optim, t_max = 2000)
+```
 
+
+```{r}
 mizer::plotBiomass(sim_optim)
 plotBiomassObservedVsModelCustom(sim_optim)
 plotSpectra(sim_optim)
@@ -218,4 +221,31 @@ sim_optim@params@species_params$interaction_resource
 
 Feeding level is too high, linked to too fast growth. Need to reduce that. Going to try again but with a lower boundary for interaction resource
 
+
+Template for fast optim
+```{r}
+library(mizerHowTo)
+
+vary_df <- data.frame("name" = c("R_max","interaction_resource"),
+                      "length" = c(12,12),
+                      "lower" = c(3,.1), 
+                      "upper" = c(15,.9),
+                      "slot" = rep("species_params",2),
+                      "unit" = c("log10","linear"))
+
+vary <- c(log10(NS_params@species_params$R_max), rep(1,12))
+
+sim <- project(NS_params)
+NS_params@species_params$yield_observed <- getYield(sim)[101,]
+
+
+
+getErrorCustom(vary = vary, vary_df = vary_df, params = NS_params, data_type = "yield_observed")
+
+res <- fastOptim(params = NS_params, 
+                 vary = vary,
+                 vary_df = vary_df,
+                 errorFun = getErrorCustom,
+                 data_type = "yield_observed")
+```
 
