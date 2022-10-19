@@ -221,6 +221,117 @@ sim_optim@params@species_params$interaction_resource
 
 Feeding level is too high, linked to too fast growth. Need to reduce that. Going to try again but with a lower boundary for interaction resource
 
+Let's tweak gamma with the shiny app
+
+```{r}
+shiny_g2 <- function(params, dat = NULL)
+{
+  
+  params_shiny <- params
+  
+  ui=fluidPage(
+    titlePanel("Gamma calibration"),
+    fluidRow(
+      column(2,
+             wellPanel(
+               actionButton("run", "Run the simulation")
+             ),
+             wellPanel(
+               actionButton("done", "Return", icon = icon("check"),
+                                   onclick = "setTimeout(function(){window.close();},500);")
+             ),
+             wellPanel(
+               uiOutput("toggle_gamma"))
+      )
+      ,
+      column(5,
+             plotOutput("plotGrowth", height = 600),
+             plotOutput("plotFeed", height = 600),
+             if(!is.null(dat)) plotOutput("plotYield", height = 600)
+      ),
+      column(5,
+             plotOutput("plotDiet", height = 600),
+             plotOutput("plotCal", height = 600)
+      )
+    )
+  )
+  
+  server <- function(input, output) {
+    output$toggle_gamma <- renderUI({
+      n_spec <- length(params_shiny@species_params$species)
+      lapply(1:n_spec, function(i) {
+        div(
+          paste(params_shiny@species_params$species[i], 
+                'Initial Value:', 
+                params_shiny@species_params$gamma[i]), 
+          numericInput(inputId = paste0('gamma', i),
+                       "Search volume:", 
+                       # min = .1*params_shiny@species_params$gamma[i], 
+                       # max = 10*params_shiny@species_params$gamma[i],
+                       value = params_shiny@species_params$gamma[i]) 
+        )
+      })
+    })
+    # reactive expression
+    sim <- eventReactive(input$run, {
+      n_spec <- length(params_shiny@species_params$species)
+      new_gamma <- c(sapply(1:n_spec, function(i) {
+        inputName <- paste("gamma", i, sep = "")
+        input[[inputName]]
+      }))
+      
+      # print(new_gamma)
+      shiny_gamma_output <<- new_gamma
+      
+      params_shiny@species_params$gamma <- new_gamma
+      params_shiny <- setParams(params_shiny)
+      # print(params_shiny@species_params$gamma) # check if everything is going well
+      sim_shiny <- project(params_shiny, effort = 1, t_max = 100)
+    })
+    
+    output$plotGrowth <- renderPlot({
+      plotGrowthCurves2(sim(), species_panel = T)
+    })
+    
+    output$plotFeed <- renderPlot({
+      plotFeedingLevel(sim(), include_critical = T)
+    })
+    
+    output$plotCal <- renderPlot({
+      plotCalibration(sim())
+    })
+    
+    if(!is.null(dat))
+    {output$plotYield <- renderPlot({
+      plotPredObsYield(sim(),dat)
+    })
+    }
+    
+    output$plotDiet <- renderPlot({
+      plotDiet2(sim())
+    })
+    
+    observeEvent(input$done, {
+      stopApp(sim()@params@species_params$gamma)
+    })
+    
+  }
+  
+  runGadget(ui, server, viewer = browserViewer())
+}
+```
+
+
+```{r}
+library(mizerHowTo)
+params <- sim_optim@params
+
+a <- shiny_g2(params)
+
+
+```
+
+
 
 Template for fast optim
 ```{r}
