@@ -151,7 +151,7 @@ ggplot(plot_dat, aes(x = observed, y = model,color = species)) +
 Need to rerun optim to get the biomass within the quantiles
 
 ```{r}
-params2 <- readRDS("params/params11.rds")
+params2 <- readRDS("params/params12.rds")
 ```
 
 
@@ -183,7 +183,7 @@ optim_result <- optimParallel::optimParallel(par=vary,getErrorCustom,params=para
 stopCluster(cl)
 
 toc()
-saveRDS(optim_result, file="params/optim_result_reboot3.RDS")
+saveRDS(optim_result, file="params/optim_result_reboot4.RDS")
 ```
 
 
