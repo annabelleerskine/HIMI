@@ -198,7 +198,7 @@ interaction <- params_optim@interaction
 interaction[] <- matrix(optim_result$par[28:108],nrow = 9) 
 params_optim <- setInteraction(params_optim,interaction)
 
-sim_optim <- project(params_optim, t_max = 2000)
+sim_optim <- project(params_optim, t_max = 1000)
 ```
 
 
@@ -219,7 +219,7 @@ plotFeedingLevel(sim_optim)
 sim_optim@params@species_params$interaction_resource
 ```
 
-Feeding level is too high, linked to too fast growth. Need to reduce that. Going to try again but with a lower boundary for interaction resource
+Feeding level is too high, linked to too fast growth. Need to reduce that. 
 
 Let's tweak gamma with the shiny app
 
@@ -323,14 +323,27 @@ shiny_g2 <- function(params, dat = NULL)
 
 
 ```{r}
-library(mizerHowTo)
 params <- sim_optim@params
 
-a <- shiny_g2(params)
+newGamma <- shiny_g2(params)
 
+sim_optim@params@species_params$gamma <- newGamma
+params3 <- setParams(sim_optim@params)
+
+sim3 <- project(params3)
+
+plotBiomass(sim3)
+plotBiomassObservedVsModelCustom(sim3)
+plotGrowthCurves(sim3, species_panel = T)
+
+params3@initial_n <- sim3@n[101,,]
+
+params3 <- setParams(params3)
+saveRDS(params3, file = "params/params12.rds")
 
 ```
 
+Now need to optimise again with the new growth curves
 
 
 Template for fast optim
