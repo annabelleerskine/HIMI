@@ -223,109 +223,11 @@ Feeding level is too high, linked to too fast growth. Need to reduce that.
 
 Let's tweak gamma with the shiny app
 
-```{r}
-shiny_g2 <- function(params, dat = NULL)
-{
-  
-  params_shiny <- params
-  
-  ui=fluidPage(
-    titlePanel("Gamma calibration"),
-    fluidRow(
-      column(2,
-             wellPanel(
-               actionButton("run", "Run the simulation")
-             ),
-             wellPanel(
-               actionButton("done", "Return", icon = icon("check"),
-                                   onclick = "setTimeout(function(){window.close();},500);")
-             ),
-             wellPanel(
-               uiOutput("toggle_gamma"))
-      )
-      ,
-      column(5,
-             plotOutput("plotGrowth", height = 600),
-             plotOutput("plotFeed", height = 600),
-             if(!is.null(dat)) plotOutput("plotYield", height = 600)
-      ),
-      column(5,
-             plotOutput("plotDiet", height = 600),
-             plotOutput("plotCal", height = 600)
-      )
-    )
-  )
-  
-  server <- function(input, output) {
-    output$toggle_gamma <- renderUI({
-      n_spec <- length(params_shiny@species_params$species)
-      lapply(1:n_spec, function(i) {
-        div(
-          paste(params_shiny@species_params$species[i], 
-                'Initial Value:', 
-                params_shiny@species_params$gamma[i]), 
-          numericInput(inputId = paste0('gamma', i),
-                       "Search volume:", 
-                       # min = .1*params_shiny@species_params$gamma[i], 
-                       # max = 10*params_shiny@species_params$gamma[i],
-                       value = params_shiny@species_params$gamma[i]) 
-        )
-      })
-    })
-    # reactive expression
-    sim <- eventReactive(input$run, {
-      n_spec <- length(params_shiny@species_params$species)
-      new_gamma <- c(sapply(1:n_spec, function(i) {
-        inputName <- paste("gamma", i, sep = "")
-        input[[inputName]]
-      }))
-      
-      # print(new_gamma)
-      shiny_gamma_output <<- new_gamma
-      
-      params_shiny@species_params$gamma <- new_gamma
-      params_shiny <- setParams(params_shiny)
-      # print(params_shiny@species_params$gamma) # check if everything is going well
-      sim_shiny <- project(params_shiny, effort = 1, t_max = 100)
-    })
-    
-    output$plotGrowth <- renderPlot({
-      plotGrowthCurves2(sim(), species_panel = T)
-    })
-    
-    output$plotFeed <- renderPlot({
-      plotFeedingLevel(sim(), include_critical = T)
-    })
-    
-    output$plotCal <- renderPlot({
-      plotCalibration(sim())
-    })
-    
-    if(!is.null(dat))
-    {output$plotYield <- renderPlot({
-      plotPredObsYield(sim(),dat)
-    })
-    }
-    
-    output$plotDiet <- renderPlot({
-      plotDiet2(sim())
-    })
-    
-    observeEvent(input$done, {
-      stopApp(sim()@params@species_params$gamma)
-    })
-    
-  }
-  
-  runGadget(ui, server, viewer = browserViewer())
-}
-```
-
 
 ```{r}
 params <- sim_optim@params
 
-newGamma <- shiny_g2(params)
+newGamma <- mizerHowto::shiny_gamma(params)
 
 sim_optim@params@species_params$gamma <- newGamma
 params3 <- setParams(sim_optim@params)
@@ -343,7 +245,23 @@ saveRDS(params3, file = "params/params12.rds")
 
 ```
 
-Now need to optimise again with the new growth curves
+Now need to optimise again with the new growth curves (doing optim on GEM48)
+
+
+```{r}
+param_optim <- readRDS("params/params12.rds")
+optim_result <- readRDS("params/optim_result_reboot4.RDS")
+
+species_params(params_optim)$R_max<-10^optim_result$par[1:9]
+species_params(params_optim)$erepro<-optim_result$par[10:18]
+species_params(params_optim)$interaction_resource<-optim_result$par[19:27]
+
+interaction <- params_optim@interaction
+interaction[] <- matrix(optim_result$par[28:108],nrow = 9) 
+params_optim <- setInteraction(params_optim,interaction)
+
+sim_optim <- project(params_optim, t_max = 1000)
+```
 
 
 Template for fast optim
