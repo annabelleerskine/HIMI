@@ -150,6 +150,8 @@ ggplot(plot_dat, aes(x = observed, y = model,color = species)) +
 
 Need to rerun optim to get the biomass within the quantiles
 
+## optimParallel
+
 ```{r}
 params2 <- readRDS("params/params12.rds")
 ```
@@ -223,6 +225,7 @@ Feeding level is too high, linked to too fast growth. Need to reduce that.
 
 Let's tweak gamma with the shiny app
 
+## tweaking gamma
 
 ```{r}
 params <- sim_optim@params
@@ -249,7 +252,7 @@ Now need to optimise again with the new growth curves (doing optim on GEM48)
 
 
 ```{r}
-param_optim <- readRDS("params/params12.rds")
+params_optim <- readRDS("params/params12.rds")
 optim_result <- readRDS("params/optim_result_reboot4.RDS")
 
 species_params(params_optim)$R_max<-10^optim_result$par[1:9]
@@ -262,6 +265,92 @@ params_optim <- setInteraction(params_optim,interaction)
 
 sim_optim <- project(params_optim, t_max = 1000)
 ```
+
+```{r}
+mizer::plotBiomass(sim_optim)
+plotBiomassObservedVsModelCustom(sim_optim)
+plotSpectra(sim_optim)
+
+plotGrowthCurves(sim_optim, species_panel = T)
+mizerHowTo::plotDiet2(sim_optim)
+plotFeedingLevel(sim_optim)
+```
+
+```{r}
+
+params4 <- sim_optim@params
+params4@initial_n <- sim_optim@n[1001,,]
+saveRDS(params4, file = "params/params13.rds")
+```
+
+
+# Fisheries calibration
+
+The data is in ll_trends. Since I'm modelling the whole area, I can use the data straight like this. Effort is number of hooks and catch is in tonnes. I estimated the catchability already so should run straight the time series calibration.
+
+```{r}
+
+params4 <- readRDS("params/params13.rds")
+```
+
+Calibration setup. To match model to time series we are going to vary `R_max`, `erepro` and `catchability`.
+
+```{r}
+
+vary_df <- data.frame("name" = c("R_max","erepro","catchability"),
+                      "length" = c(9,9,1),
+                      "lower" = c(3,1e-7,1e-9), 
+                      "upper" = c(15,.9,1e-2),
+                      "slot" = c(rep("species_params",2),"gear_params"),
+                      "unit" = c("log10",rep("linear",2)))
+
+vary <- c(log10(params4@species_params$R_max),
+          params4@species_params$erepro,
+          params4@gear_params$catchability[1])
+
+effort <-array(ll_trends$Effort, dim = c(length(ll_trends$Effort),1), 
+               dimnames = list("time" = ll_trends$Year, "gear" = params4@gear_params$gear[1]))
+
+time_series <- array(0, dim = c(dim(ll_trends)[1], dim(params4@species_params)[1]),
+                     dimnames = list("time" = ll_trends$Year, "species" = params4@species_params$species))
+time_series[,1] <- ll_trends$CatchT * 1e6 #conversion to g
+
+```
+
+
+
+
+
+```{r}
+getErrorCustom(vary = vary,
+               vary_df = vary_df, 
+               params = params4, 
+               data_type = "yield_observed", 
+               effort = effort, 
+               time_series = time_series)
+```
+
+
+it works, now need to adapt fastoptim and rebuild mizerhowto
+
+```{r}
+
+mizerHowTo::fastOptim(params = params4,
+                      vary = vary,
+                      vary_df = vary_df,
+                      errorFun = mizerHowTo::getErrorCustom, 
+                      data_type = "yield_observed", 
+                      effort = effort,
+                      time_series = time_series) 
+
+
+
+
+
+
+```
+
+
 
 
 Template for fast optim
