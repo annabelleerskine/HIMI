@@ -30,7 +30,7 @@ I have two datasets. The biomass survey is RSTS data which is kg of species per 
 Nicole sent an HIMI mask that I can use to get the total surface area
 
 ```{r}
-HIMI_shape<-sf::st_read("HIMI_Mask//HIMI_EEZ_polygon/HIMI_EEZ_polygon.shp") # the shape file of the area
+HIMI_shape<-sf::st_read("HIMI_Mask/HIMI_EEZ_polygon/HIMI_EEZ_polygon.shp") # the shape file of the area
 plot(HIMI_shape)
 HIMI_area <- sf::st_area(HIMI_shape)
 ```
@@ -335,7 +335,7 @@ it works, now need to adapt fastoptim and rebuild mizerhowto
 
 ```{r}
 
-mizerHowTo::fastOptim(params = params4,
+res <- mizerHowTo::fastOptim(params = params4,
                       vary = vary,
                       vary_df = vary_df,
                       errorFun = mizerHowTo::getErrorCustom, 
@@ -346,7 +346,7 @@ mizerHowTo::fastOptim(params = params4,
 
 
 
-
+saveRDS(res, file = "params/optim_result_reboot5.RDS")
 
 ```
 
