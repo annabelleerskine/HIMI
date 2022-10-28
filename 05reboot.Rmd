@@ -350,6 +350,27 @@ saveRDS(res, file = "params/optim_result_reboot5.RDS")
 
 ```
 
+Let's put things back in the param object and take a look!
+
+```{r}
+params_optim <- readRDS("params/params13.rds")
+optim_result <- readRDS("params/optim_result_reboot5.RDS")
+
+species_params(params_optim)$R_max<-10^optim_result$par[1:9]
+species_params(params_optim)$erepro<-optim_result$par[10:18]
+gear_params(params_optim)$catchability[1]<- optim_result$par[19]
+
+sim_optim <- project(params_optim, effort = effort)
+```
+
+
+```{r}
+
+plotBiomass(sim_optim)
+plotYield(sim_optim)
+
+```
+
 
 
 
