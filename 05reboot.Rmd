@@ -299,42 +299,33 @@ Calibration setup. To match model to time series we are going to vary `R_max`, `
 
 vary_df <- data.frame("name" = c("R_max","erepro","catchability"),
                       "length" = c(9,9,1),
-                      "lower" = c(3,1e-7,1e-9), 
+                      "lower" = c(3,1e-10,1e-15), 
                       "upper" = c(15,.9,1e-2),
                       "slot" = c(rep("species_params",2),"gear_params"),
                       "unit" = c("log10",rep("linear",2)))
 
 vary <- c(log10(params4@species_params$R_max),
           params4@species_params$erepro,
-          params4@gear_params$catchability[1])
+          1e-9)
 
-effort <-array(ll_trends$Effort, dim = c(length(ll_trends$Effort),1), 
-               dimnames = list("time" = ll_trends$Year, "gear" = params4@gear_params$gear[1]))
+# effort <-array(ll_trends$Effort, dim = c(length(ll_trends$Effort),1), 
+#                dimnames = list("time" = ll_trends$Year, "gear" = params4@gear_params$gear[1]))
+# 
+# time_series <- array(0, dim = c(dim(ll_trends)[1], dim(params4@species_params)[1]),
+#                      dimnames = list("time" = ll_trends$Year, "species" = params4@species_params$species))
+# time_series[,1] <- ll_trends$CatchT * 1e6 #conversion to g
 
-time_series <- array(0, dim = c(dim(ll_trends)[1], dim(params4@species_params)[1]),
-                     dimnames = list("time" = ll_trends$Year, "species" = params4@species_params$species))
-time_series[,1] <- ll_trends$CatchT * 1e6 #conversion to g
+myData <- readRDS("fishingInput.RDS")
 
-```
-
-
-
-
-
-```{r}
-getErrorCustom(vary = vary,
-               vary_df = vary_df, 
-               params = params4, 
-               data_type = "yield_observed", 
-               effort = effort, 
-               time_series = time_series)
+effort <- myData[[1]]
+time_series <- myData[[2]]
 ```
 
 
 it works, now need to adapt fastoptim and rebuild mizerhowto
 
 ```{r}
-
+tic()
 res <- mizerHowTo::fastOptim(params = params4,
                       vary = vary,
                       vary_df = vary_df,
@@ -343,7 +334,7 @@ res <- mizerHowTo::fastOptim(params = params4,
                       effort = effort,
                       time_series = time_series) 
 
-
+toc()
 
 
 saveRDS(res, file = "params/optim_result_reboot5.RDS")
@@ -360,7 +351,79 @@ species_params(params_optim)$R_max<-10^optim_result$par[1:9]
 species_params(params_optim)$erepro<-optim_result$par[10:18]
 gear_params(params_optim)$catchability[1]<- optim_result$par[19]
 
+saveRDS(params_optim, file = "params/params14.rds")
+
 sim_optim <- project(params_optim, effort = effort)
+```
+
+Looping for more accuracy
+
+
+```{r}
+
+vary_df <- data.frame("name" = c("R_max","erepro","catchability"),
+                      "length" = c(9,9,1),
+                      "lower" = c(3,1e-10,1e-15), 
+                      "upper" = c(15,.9,1e-2),
+                      "slot" = c(rep("species_params",2),"gear_params"),
+                      "unit" = c("log10",rep("linear",2)))
+
+vary <- c(log10(params_optim@species_params$R_max),
+          params_optim@species_params$erepro,
+          params_optim@gear_params$catchability[1])
+
+myData <- readRDS("fishingInput.RDS")
+
+effort <- myData[[1]]
+time_series <- myData[[2]]
+
+tic()
+for(i in 1:10)
+{
+
+res <- mizerHowTo::fastOptim(params = params_optim,
+                      vary = vary,
+                      vary_df = vary_df,
+                      errorFun = mizerHowTo::getErrorCustom, 
+                      data_type = "yield_observed", 
+                      effort = effort,
+                      time_series = time_series) 
+
+species_params(params_optim)$R_max<-10^optim_result$par[1:9]
+species_params(params_optim)$erepro<-optim_result$par[10:18]
+gear_params(params_optim)$catchability[1]<- optim_result$par[19]
+
+vary <- c(log10(params_optim@species_params$R_max),
+          params_optim@species_params$erepro,
+          params_optim@gear_params$catchability[1])
+}
+
+toc()
+
+```
+
+
+
+
+
+
+
+
+```{r}
+vary_df <- data.frame("name" = c("catchability"),
+                      "length" = c(1),
+                      "lower" = c(1e-15), 
+                      "upper" = c(1e-2),
+                      "slot" = c("gear_params"),
+                      "unit" = c("linear"))
+
+
+getErrorCustom(vary = 1e-09,
+               vary_df = vary_df, 
+               params = params_optim, 
+               data_type = "yield_observed", 
+               effort = effort, 
+               time_series = time_series)
 ```
 
 

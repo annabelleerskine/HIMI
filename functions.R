@@ -140,7 +140,7 @@ calibrateBiomassCustom <- function (params)
 
 # adding the cutoff when calculating error
 
-getErrorCustom <- function(vary, params, dat, tol = 0.001, 
+getErrorCustomBiomass <- function(vary, params, dat, tol = 0.001, 
                            timetorun = 10)
 {
   params@species_params$R_max[1:9]<-10^vary[1:9]
