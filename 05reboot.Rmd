@@ -314,12 +314,16 @@ vary <- c(log10(params4@species_params$R_max),
 # time_series <- array(0, dim = c(dim(ll_trends)[1], dim(params4@species_params)[1]),
 #                      dimnames = list("time" = ll_trends$Year, "species" = params4@species_params$species))
 # time_series[,1] <- ll_trends$CatchT * 1e6 #conversion to g
+# saveRDS(list(effort,time_series), file = "fishingInput.RDS")
 
 myData <- readRDS("fishingInput.RDS")
 
 effort <- myData[[1]]
 time_series <- myData[[2]]
+
 ```
+
+
 
 
 it works, now need to adapt fastoptim and rebuild mizerhowto
