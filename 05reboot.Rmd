@@ -400,6 +400,9 @@ vary <- c(log10(params_optim@species_params$R_max),
 
 toc()
 
+saveRDS(res, "params/optim_result_reboot6.RDS")
+
+
 ```
 
 
