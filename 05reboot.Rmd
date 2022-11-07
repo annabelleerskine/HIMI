@@ -288,6 +288,37 @@ saveRDS(params4, file = "params/params13.rds")
 
 The data is in ll_trends. Since I'm modelling the whole area, I can use the data straight like this. Effort is number of hooks and catch is in tonnes. I estimated the catchability already so should run straight the time series calibration.
 
+
+
+Template for fast optim
+```{r}
+library(mizerHowTo)
+
+vary_df <- data.frame("name" = c("R_max","interaction_resource"),
+                      "length" = c(12,12),
+                      "lower" = c(3,.1), 
+                      "upper" = c(15,.9),
+                      "slot" = rep("species_params",2),
+                      "unit" = c("log10","linear"))
+
+vary <- c(log10(NS_params@species_params$R_max), rep(1,12))
+
+sim <- project(NS_params)
+NS_params@species_params$yield_observed <- getYield(sim)[101,]
+
+
+
+getErrorCustom(vary = vary, vary_df = vary_df, params = NS_params, data_type = "yield_observed")
+
+res <- fastOptim(params = NS_params, 
+                 vary = vary,
+                 vary_df = vary_df,
+                 errorFun = getErrorCustom,
+                 data_type = "yield_observed")
+```
+
+
+
 ```{r}
 
 params4 <- readRDS("params/params13.rds")
@@ -324,19 +355,17 @@ time_series <- myData[[2]]
 ```
 
 
-
-
 it works, now need to adapt fastoptim and rebuild mizerhowto
 
 ```{r}
 tic()
 res <- mizerHowTo::fastOptim(params = params4,
-                      vary = vary,
-                      vary_df = vary_df,
-                      errorFun = mizerHowTo::getErrorCustom, 
-                      data_type = "yield_observed", 
-                      effort = effort,
-                      time_series = time_series) 
+                             vary = vary,
+                             vary_df = vary_df,
+                             errorFun = mizerHowTo::getErrorCustom, 
+                             data_type = "yield_observed", 
+                             effort = effort,
+                             time_series = time_series) 
 
 toc()
 
@@ -360,7 +389,7 @@ saveRDS(params_optim, file = "params/params14.rds")
 sim_optim <- project(params_optim, effort = effort)
 ```
 
-Looping for more accuracy
+Looping for more accuracy so looping optimparallel a few times
 
 
 ```{r}
@@ -384,22 +413,22 @@ time_series <- myData[[2]]
 tic()
 for(i in 1:10)
 {
-
-res <- mizerHowTo::fastOptim(params = params_optim,
-                      vary = vary,
-                      vary_df = vary_df,
-                      errorFun = mizerHowTo::getErrorCustom, 
-                      data_type = "yield_observed", 
-                      effort = effort,
-                      time_series = time_series) 
-
-species_params(params_optim)$R_max<-10^optim_result$par[1:9]
-species_params(params_optim)$erepro<-optim_result$par[10:18]
-gear_params(params_optim)$catchability[1]<- optim_result$par[19]
-
-vary <- c(log10(params_optim@species_params$R_max),
-          params_optim@species_params$erepro,
-          params_optim@gear_params$catchability[1])
+  
+  res <- mizerHowTo::fastOptim(params = params_optim,
+                               vary = vary,
+                               vary_df = vary_df,
+                               errorFun = mizerHowTo::getErrorCustom, 
+                               data_type = "yield_observed", 
+                               effort = effort,
+                               time_series = time_series) 
+  
+  species_params(params_optim)$R_max<-10^optim_result$par[1:9]
+  species_params(params_optim)$erepro<-optim_result$par[10:18]
+  gear_params(params_optim)$catchability[1]<- optim_result$par[19]
+  
+  vary <- c(log10(params_optim@species_params$R_max),
+            params_optim@species_params$erepro,
+            params_optim@gear_params$catchability[1])
 }
 
 toc()
@@ -409,65 +438,424 @@ saveRDS(res, "params/optim_result_reboot6.RDS")
 
 ```
 
-
-
-
-
-
-
+and let's see the result
 
 ```{r}
-vary_df <- data.frame("name" = c("catchability"),
-                      "length" = c(1),
-                      "lower" = c(1e-15), 
-                      "upper" = c(1e-2),
-                      "slot" = c("gear_params"),
-                      "unit" = c("linear"))
+params_optim <- readRDS("params/params14.rds")
+optim_result <- readRDS("params/optim_result_reboot6.RDS")
+myData <- readRDS("fishingInput.RDS")
+effort <- myData[[1]]
+time_series <- myData[[2]]
 
+species_params(params_optim)$R_max<-10^optim_result$par[1:9]
+species_params(params_optim)$erepro<-optim_result$par[10:18]
+gear_params(params_optim)$catchability[1]<- optim_result$par[19]
 
-getErrorCustom(vary = 1e-09,
-               vary_df = vary_df, 
-               params = params_optim, 
-               data_type = "yield_observed", 
-               effort = effort, 
-               time_series = time_series)
+saveRDS(params_optim, file = "params/params15.rds")
+
+sim_optim <- project(params_optim, effort = effort)
 ```
 
 
-```{r}
 
+```{r}
+plotSpectra(sim_optim)
 plotBiomass(sim_optim)
 plotYield(sim_optim)
+plotGrowthCurves(sim_optim, species_panel = T)
+mizerHowTo::plotDiet2(sim_optim)
 
 ```
 
 
+meh
 
+Comparing the yields
 
-Template for fast optim
 ```{r}
-library(mizerHowTo)
 
-vary_df <- data.frame("name" = c("R_max","interaction_resource"),
-                      "length" = c(12,12),
-                      "lower" = c(3,.1), 
-                      "upper" = c(15,.9),
-                      "slot" = rep("species_params",2),
-                      "unit" = c("log10","linear"))
+plot_dat <- plotYield(sim_optim, return_data = T)
+plot_dat$Species <- time_series[,1]
+colnames(plot_dat)[2:3] <- c("modelled","observed")
+plot_dat <- reshape2::melt(plot_dat, "Year")
 
-vary <- c(log10(NS_params@species_params$R_max), rep(1,12))
-
-sim <- project(NS_params)
-NS_params@species_params$yield_observed <- getYield(sim)[101,]
+ggplot(plot_dat) +
+  geom_line(aes(x = Year, y = value, color = variable ))+
+  scale_y_continuous(name = "Yield in g")
 
 
-
-getErrorCustom(vary = vary, vary_df = vary_df, params = NS_params, data_type = "yield_observed")
-
-res <- fastOptim(params = NS_params, 
-                 vary = vary,
-                 vary_df = vary_df,
-                 errorFun = getErrorCustom,
-                 data_type = "yield_observed")
 ```
+
+
+Fishing is obviously too high in the model, causing toothfish to collapse. Why was it selected by optimparallel?
+
+Quick check of getError values
+
+```{r}
+
+vary_df <- data.frame("name" = c("catchability"),
+                      "length" = 1,
+                      "lower" = 1e-15, 
+                      "upper" = 1e-5,
+                      "slot" = "gear_params",
+                      "unit" = "linear")
+
+getErrorCustom(vary = 1e-9, 
+               vary_df = vary_df, 
+               params = sim_optim@params,
+               data_type = "yield_observed",
+               effort = effort,
+               time_series = time_series
+)
+
+```
+
+Simulations are not converging why?
+
+```{r}
+
+sim <- project(sim_optim@params, effort = 0)
+plotBiomass(sim)
+
+```
+
+I think optimparallel changed rmax and erepro too much
+Redoing calibration just with erepro and catchability
+
+
+```{r}
+params4 <- readRDS("params/params13.rds")
+
+vary_df <- data.frame("name" = c("erepro","catchability"),
+                      "length" = c(9,1),
+                      "lower" = c(1e-10,1e-15), 
+                      "upper" = c(.9,1e-2),
+                      "slot" = c("species_params","gear_params"),
+                      "unit" = c(rep("linear",2)))
+
+vary <- c(
+  params4@species_params$erepro,
+  1e-9)
+
+myData <- readRDS("fishingInput.RDS")
+
+effort <- myData[[1]]
+time_series <- myData[[2]]
+
+
+tic()
+res <- mizerHowTo::fastOptim(params = params4,
+                             vary = vary,
+                             vary_df = vary_df,
+                             errorFun = mizerHowTo::getErrorCustom, 
+                             data_type = "yield_observed", 
+                             effort = effort,
+                             time_series = time_series) 
+
+toc()
+
+
+saveRDS(res, file = "params/optim_result_reboot7.RDS")
+res <- readRDS("params/optim_result_reboot7.RDS")
+
+species_params(params4)$erepro<-res$par[1:9]
+gear_params(params4)$catchability[1]<- res$par[10]
+
+# saveRDS(params_optim, file = "params/params15.rds")
+```
+
+
+```{r}
+sim_optim <- project(params4, effort = effort)
+plotBiomass(sim_optim)
+
+plot_dat <- plotYield(sim_optim, return_data = T)
+plot_dat$Species <- time_series[,1]
+colnames(plot_dat)[2:3] <- c("modelled","observed")
+plot_dat <- reshape2::melt(plot_dat, "Year")
+
+ggplot(plot_dat) +
+  geom_line(aes(x = Year, y = value, color = variable))+
+  scale_y_continuous(name = "Yield in g")
+
+mizerHowTo::plotDiet2(sim_optim)
+
+saveRDS(sim_optim, file = "params/params16.rds")
+
+```
+
+
+Yield looks way better and do not capture the sharp drop in 2015 so look promising :)
+One of the prey is dying though
+
+Now to fix M.cam, not really sure why it's going extinct... growth, feeding and mortality look okay
+
+```{r}
+sim_optim <- readRDS("params/params16.rds")
+
+params5 <- calibrateBiomassCustom(sim_optim@params)
+sim5 <- project(params5)
+plotBiomass(sim5)
+plotEnergyBudget(sim5)
+
+```
+
+
+Can also try to check the rdd vs rdi
+
+```{r}
+
+mizerHowTo::plotRdiVsRdd(sim5)
+
+```
+
+This shows that M Cam is not affected by rmax and just doesn't reproduce enough!
+
+Let's play with wmat_25 and psi to tweak a better growth for M.cam, maybe it will fix the extinction
+
+Current psi profile
+
+```{r}
+
+psi <- sim5@params@psi
+
+plot_dat <- reshape2::melt(psi)
+
+ggplot(plot_dat) +
+  geom_line(aes(x = w, y = value, color = sp)) +
+  scale_x_continuous(trans = "log10")
+
+
+```
+
+What is the current wmat_25 for the species? I'm going to assume that reducing it will make species grow and mature faster
+
+```{r}
+
+plot_dat <- plotGrowthCurves(sim5, species = "M.cam", return_data = T)
+plot_dat$type <- "original"
+
+sim5@params@species_params$w_mat25
+
+sim6 <- sim5
+
+sim6@params@species_params$w_mat25[5] <- sim5@params@species_params$w_mat25[5]*.85
+
+params6 <- setParams(sim6@params)
+
+sim6 <- project(params6)
+plotBiomass(sim6)
+res <- plotGrowthCurves(sim6, species = "M.cam", return_data = T)
+res$type <- "updated"
+
+plot_dat2 <- rbind(plot_dat, res)
+
+
+ggplot(plot_dat2) +
+  geom_line(aes(x = Age, y = value, color = type, linetype = Legend)) +
+  geom_hline(yintercept = sim5@params@species_params$w_mat25[5], color = "red") +
+  geom_hline(yintercept = sim6@params@species_params$w_mat25[5], color = "blue")
+
+
+```
+
+Can't manage to change the profile before ~age 5
+Let's look at erepro instead
+
+```{r}
+
+mizerHowTo::shiny_erepro(sim5@params)
+
+```
+
+
+Bumping C.cam erepro to 0.3 should work
+
+
+```{r}
+
+params6 <- sim5@params
+params6@species_params$erepro[5] <- .3
+params6 <- setParams(params6)
+params6 <- projectToSteady(params6)
+
+
+sim6 <- project(params6)
+plotBiomass(sim6)
+plotBiomassObservedVsModelCustom(sim6)
+
+sim6@params@initial_n <- sim6@n[dim(sim6@n)[1],,]
+
+
+```
+
+Checking if fisheries is still ok
+
+
+```{r}
+myData <- readRDS("fishingInput.RDS")
+effort <- myData[[1]]
+time_series <- myData[[2]]
+sim6 <- project(sim6@params, effort = effort)
+plot_dat <- plotYield(sim6, return_data = T)
+plot_dat$Species <- time_series[,1]
+colnames(plot_dat)[2:3] <- c("modelled","observed")
+plot_dat <- reshape2::melt(plot_dat, "Year")
+
+ggplot(plot_dat) +
+  geom_line(aes(x = Year, y = value, color = variable))+
+  scale_y_continuous(name = "Yield in g")
+
+saveRDS(sim6, file = "params/params17.rds")
+```
+
+
+# Thermizer 
+
+```{r}
+sim6 <- readRDS("params/params17.rds")
+params <- sim6@params
+```
+
+Setting up temperature range
+
+```{r}
+
+temp_min <- c(1.8,-1.1,1.3,1.3,-0.1,-1.8,1.4,1.8,1.6) # fishbase
+# species_params(params)$temp_min <- c(1.4,-1.1,1.3,1.3,-0.1,-1.8,1.4,1.4,1.4) # adjusted so species survive historical temperatures
+
+# temp_max <- c(8.8,2.9,2.5,2.8,1.4,2,2.3,3.1,3.9) #fishbase
+temp_max <- c(8.8,2.9,2.5,2.8,2.4,2.4,2.3,3.1,3.9) # adjusted
+
+```
+
+Loading fismip data
+
+```{r}
+# temperature
+ocean_temp_picontrol <- readRDS("~/RstudioProjects/FISHMIP/data/processed/IPSL_ocean_temp_array_PIcontrol.RDS")
+ocean_temp_ssp1rcp26 <- readRDS("~/RstudioProjects/FISHMIP/data/processed/IPSL_ocean_temp_array_CCscenario_126.RDS")
+ocean_temp_ssp5rcp85 <- readRDS("~/RstudioProjects/FISHMIP/data/processed/IPSL_ocean_temp_array_CCscenario_585.RDS")
+
+# plankton
+n_pp_array_picontrol <- readRDS("~/RstudioProjects/FISHMIP/data/processed/IPSL_n_pp_array_PIcontrol.RDS")
+n_pp_array_ssp1rcp26 <- readRDS("~/RstudioProjects/FISHMIP/data/processed/IPSL_n_pp_array_CCscenario_126.RDS")
+n_pp_array_ssp5rcp85 <- readRDS("~/RstudioProjects/FISHMIP/data/processed/IPSL_n_pp_array_CCscenario_585.RDS")
+```
+
+Set the scenarios
+
+```{r}
+params_IPSL_picontrol <- upgradeTherParams(params = params,
+                                           temp_min = temp_min, temp_max = temp_max, 
+                                           ocean_temp_array = ocean_temp_picontrol, 
+                                           n_pp_array = n_pp_array_picontrol) 
+
+params_IPSL_ssp1rcp26 <- upgradeTherParams(params = params,
+                                           temp_min = temp_min, temp_max = temp_max, 
+                                           ocean_temp_array = ocean_temp_ssp1rcp26, 
+                                           n_pp_array = n_pp_array_ssp1rcp26)
+
+params_IPSL_ssp5rcp85 <- upgradeTherParams(params = params,
+                                           temp_min = temp_min, temp_max = temp_max, 
+                                           ocean_temp_array = ocean_temp_ssp5rcp85, 
+                                           n_pp_array = n_pp_array_ssp5rcp85)
+
+
+```
+
+
+Plot showing the temperature performance of the species vs what temperature there is and what to expect
+
+```{r}
+temperature <- params_IPSL_ssp1rcp26@other_params$other$ocean_temp[,1]
+
+# encounter scalar value today and in the future
+historical <- mean(temperature[40:60])
+hist_scalar <- NULL
+for(iTime in 1990:2009){
+  temp <- scaled_temp_effect(params_IPSL_ssp1rcp26, t = iTime)[,1]
+  hist_scalar <- cbind(hist_scalar,temp)
+}
+hist_scalar <- apply(hist_scalar,1,mean)
+
+projection <- mean(temperature[124:144])
+proj_scalar <- NULL
+for(iTime in 2074:2093){
+  temp <- scaled_temp_effect(params_IPSL_ssp1rcp26, t = iTime)[,1]
+  proj_scalar <- cbind(proj_scalar,temp)
+}
+proj_scalar <- apply(proj_scalar,1,mean)
+
+# metabolism scalar value today and in the future
+scalarM <- NULL
+for(iTemp in c(historical,projection)){
+  temp_effect_metab_realms <- array(NA, dim = c(dim(other_params(params_IPSL_ssp1rcp26)$vertical_migration)), dimnames = c(dimnames(other_params(params_IPSL_ssp1rcp26)$vertical_migration)))
+
+  # Using t+1 to avoid calling ocean_temp[0,] at the first time step
+  # Looping through each realm
+  nb_realms <- dim(other_params(params_IPSL_ssp1rcp26)$exposure)[1]
+  for (r in seq(1, nb_realms, 1)) {
+    temp_at_t <- iTemp
+
+    # Arrhenius equation
+    unscaled_temp_effect <- (exp(25.22 - (0.63/((8.62e-5)*(273 + temp_at_t)))))
+
+    # Arrhenius equation scaled to a value between 0 and 1
+    temp_effect_metabolism_r <- (unscaled_temp_effect - species_params(params_IPSL_ssp1rcp26)$metab_min) / species_params(params_IPSL_ssp1rcp26)$metab_range
+
+    # Set temperature effect to 0 if temperatures are outside thermal tolerance limits
+    above_max <- temp_at_t > species_params(params_IPSL_ssp1rcp26)$temp_max
+    below_min <- temp_at_t < species_params(params_IPSL_ssp1rcp26)$temp_min
+
+    temp_effect_metabolism_r[above_max | below_min] = 0
+
+    temp_effect_metab_realms[r,,] <- temp_effect_metabolism_r*other_params(params_IPSL_ssp1rcp26)$exposure[r,]*other_params(params_IPSL_ssp1rcp26)$vertical_migration[r,,]
+  }
+
+  temp_effect_metabolism <- colSums(temp_effect_metab_realms)
+  scalarM <- cbind(scalarM, temp_effect_metabolism[,1])
+}
+  
+
+plot_dat <- plotThermPerformance(params_IPSL_ssp1rcp26,resolution = .1,return_data = T)
+
+plot_point <- data.frame("Species" = rep(params@species_params$species,2),
+                        "temperature" = rep(c(rep(historical,length(params@species_params$species)),
+                                          rep(projection,length(params@species_params$species))),2),
+                        "scalar" = c(hist_scalar,proj_scalar,scalarM[,1],scalarM[,2]),
+                        "Scenario" = rep(c(rep("historical",length(params@species_params$species)),
+                                       rep("projection",length(params@species_params$species))),2),
+                        "Type" = c(rep("Encounter",2*length(params@species_params$species)),
+                                   rep("Metabolism",2*length(params@species_params$species))))
+
+
+ggplot(plot_dat)+
+  geom_line(aes(x = temperature, y = scalar, color = Type)) +
+  geom_point(data = plot_point, aes(x = temperature, y = scalar, shape = Scenario, color = Scenario), size = 2) +
+  scale_x_continuous("Temperature in C")+
+  scale_y_continuous("Scalar value") +
+  facet_wrap(~Species, scales = "free") +
+  guides(color=guide_legend(nrow=2,byrow=TRUE), shape = guide_legend(nrow=2,byrow=TRUE)) +
+  scale_color_manual(values = c("dodgerblue","darkgreen","green3","darkorange2"))
+
+```
+
+Version from 03thermizer.rmd looks better but know I jsut want to see which species temperature range I need to extend for them to survive at current temperature. Species changed: M.Cam and B.eat
+
+
+Projections
+
+```{r}
+
+sim26 <- therProject(params_IPSL_ssp1rcp26)
+plotBiomass(sim26)
+
+```
+
+For now everything dies ^^, slowly though. It would be good to have the species stable until 2009 at least.
+
+
+
+
 
