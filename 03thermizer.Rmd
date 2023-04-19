@@ -231,7 +231,7 @@ Adding fisheries to the mix
 
 ```{r}
 
-ll_area_yr <- read_csv("ll_area_yr.csv")
+ll_area_yr <- read_csv("inputs/ll_area_yr.csv")
 
 ll_trends <- cbind(ll_trends,ll_area_yr[-dim(ll_area_yr)[1],3])
 

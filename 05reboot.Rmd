@@ -12,12 +12,17 @@ library(terra)
 library(tidyverse)
 library(mizer)
 library(mizerExperimental)
+library(mizerHowTo)
 library(therMizer)
 library(parallel)
 library(tictoc)
 source("functions.R")
 
 load("inputs/size_spec_inputs.RData")
+
+myData <- readRDS("fishingInput.RDS")
+effort <- myData[[1]]
+time_series <- myData[[2]]
 ```
 
 
@@ -37,12 +42,17 @@ HIMI_area <- sf::st_area(HIMI_shape)
 
 The surface area in km2 is
 
+
+
 ```{r}
 
 total_area <- as.numeric(HIMI_area)/1e6
 total_area
 
 ```
+
+(but I also have 189297.7 km2 from the bathy grid, which one is right?)
+
 
 Now I need the fraction of surveyed area compared to the total area. This will allow me to model the shallows area with the juveniles within the bigger area.
 
@@ -693,9 +703,7 @@ Checking if fisheries is still ok
 
 
 ```{r}
-myData <- readRDS("fishingInput.RDS")
-effort <- myData[[1]]
-time_series <- myData[[2]]
+
 sim6 <- project(sim6@params, effort = effort)
 plot_dat <- plotYield(sim6, return_data = T)
 plot_dat$Species <- time_series[,1]
@@ -711,6 +719,8 @@ saveRDS(sim6, file = "params/params17.rds")
 
 
 # Thermizer 
+
+## First setup
 
 ```{r}
 sim6 <- readRDS("params/params17.rds")
@@ -731,16 +741,19 @@ temp_max <- c(8.8,2.9,2.5,2.8,2.4,2.4,2.3,3.1,3.9) # adjusted
 
 Loading fismip data
 
+I'm using a plankton forcing which represent only 1 km2, not the whole area! Since it's average in 1km2, can just multiply by the total area
+
 ```{r}
+total_area <- 415588.9
 # temperature
 ocean_temp_picontrol <- readRDS("~/RstudioProjects/FISHMIP/data/processed/IPSL_ocean_temp_array_PIcontrol.RDS")
 ocean_temp_ssp1rcp26 <- readRDS("~/RstudioProjects/FISHMIP/data/processed/IPSL_ocean_temp_array_CCscenario_126.RDS")
 ocean_temp_ssp5rcp85 <- readRDS("~/RstudioProjects/FISHMIP/data/processed/IPSL_ocean_temp_array_CCscenario_585.RDS")
 
 # plankton
-n_pp_array_picontrol <- readRDS("~/RstudioProjects/FISHMIP/data/processed/IPSL_n_pp_array_PIcontrol.RDS")
-n_pp_array_ssp1rcp26 <- readRDS("~/RstudioProjects/FISHMIP/data/processed/IPSL_n_pp_array_CCscenario_126.RDS")
-n_pp_array_ssp5rcp85 <- readRDS("~/RstudioProjects/FISHMIP/data/processed/IPSL_n_pp_array_CCscenario_585.RDS")
+n_pp_array_picontrol <- readRDS("~/RstudioProjects/FISHMIP/data/processed/IPSL_n_pp_array_PIcontrol.RDS") + log10(total_area)
+n_pp_array_ssp1rcp26 <- readRDS("~/RstudioProjects/FISHMIP/data/processed/IPSL_n_pp_array_CCscenario_126.RDS") + log10(total_area)
+n_pp_array_ssp5rcp85 <- readRDS("~/RstudioProjects/FISHMIP/data/processed/IPSL_n_pp_array_CCscenario_585.RDS") + log10(total_area)
 ```
 
 Set the scenarios
@@ -760,6 +773,12 @@ params_IPSL_ssp5rcp85 <- upgradeTherParams(params = params,
                                            temp_min = temp_min, temp_max = temp_max, 
                                            ocean_temp_array = ocean_temp_ssp5rcp85, 
                                            n_pp_array = n_pp_array_ssp5rcp85)
+
+# to calibrate with temperature influenced rates
+paramsHist <- upgradeTherParams(params = params,
+                                temp_min = temp_min, temp_max = temp_max, 
+                                ocean_temp_array = ocean_temp_ssp1rcp26[1:60,], 
+                                n_pp_array = n_pp_array_ssp1rcp26[1:60,])
 
 
 ```
@@ -791,43 +810,43 @@ proj_scalar <- apply(proj_scalar,1,mean)
 scalarM <- NULL
 for(iTemp in c(historical,projection)){
   temp_effect_metab_realms <- array(NA, dim = c(dim(other_params(params_IPSL_ssp1rcp26)$vertical_migration)), dimnames = c(dimnames(other_params(params_IPSL_ssp1rcp26)$vertical_migration)))
-
+  
   # Using t+1 to avoid calling ocean_temp[0,] at the first time step
   # Looping through each realm
   nb_realms <- dim(other_params(params_IPSL_ssp1rcp26)$exposure)[1]
   for (r in seq(1, nb_realms, 1)) {
     temp_at_t <- iTemp
-
+    
     # Arrhenius equation
     unscaled_temp_effect <- (exp(25.22 - (0.63/((8.62e-5)*(273 + temp_at_t)))))
-
+    
     # Arrhenius equation scaled to a value between 0 and 1
     temp_effect_metabolism_r <- (unscaled_temp_effect - species_params(params_IPSL_ssp1rcp26)$metab_min) / species_params(params_IPSL_ssp1rcp26)$metab_range
-
+    
     # Set temperature effect to 0 if temperatures are outside thermal tolerance limits
     above_max <- temp_at_t > species_params(params_IPSL_ssp1rcp26)$temp_max
     below_min <- temp_at_t < species_params(params_IPSL_ssp1rcp26)$temp_min
-
+    
     temp_effect_metabolism_r[above_max | below_min] = 0
-
+    
     temp_effect_metab_realms[r,,] <- temp_effect_metabolism_r*other_params(params_IPSL_ssp1rcp26)$exposure[r,]*other_params(params_IPSL_ssp1rcp26)$vertical_migration[r,,]
   }
-
+  
   temp_effect_metabolism <- colSums(temp_effect_metab_realms)
   scalarM <- cbind(scalarM, temp_effect_metabolism[,1])
 }
-  
+
 
 plot_dat <- plotThermPerformance(params_IPSL_ssp1rcp26,resolution = .1,return_data = T)
 
 plot_point <- data.frame("Species" = rep(params@species_params$species,2),
-                        "temperature" = rep(c(rep(historical,length(params@species_params$species)),
-                                          rep(projection,length(params@species_params$species))),2),
-                        "scalar" = c(hist_scalar,proj_scalar,scalarM[,1],scalarM[,2]),
-                        "Scenario" = rep(c(rep("historical",length(params@species_params$species)),
-                                       rep("projection",length(params@species_params$species))),2),
-                        "Type" = c(rep("Encounter",2*length(params@species_params$species)),
-                                   rep("Metabolism",2*length(params@species_params$species))))
+                         "temperature" = rep(c(rep(historical,length(params@species_params$species)),
+                                               rep(projection,length(params@species_params$species))),2),
+                         "scalar" = c(hist_scalar,proj_scalar,scalarM[,1],scalarM[,2]),
+                         "Scenario" = rep(c(rep("historical",length(params@species_params$species)),
+                                            rep("projection",length(params@species_params$species))),2),
+                         "Type" = c(rep("Encounter",2*length(params@species_params$species)),
+                                    rep("Metabolism",2*length(params@species_params$species))))
 
 
 ggplot(plot_dat)+
@@ -841,21 +860,283 @@ ggplot(plot_dat)+
 
 ```
 
-Version from 03thermizer.rmd looks better but know I jsut want to see which species temperature range I need to extend for them to survive at current temperature. Species changed: M.Cam and B.eat
+Version from 03thermizer.rmd looks better but know I just want to see which species temperature range I need to extend for them to survive at current temperature. Species changed: M.Cam and B.eat
 
-
-Projections
+Checking the model
+Doing the calibration with params_IPSL_ssp1rcp26 until 2020 which is close to current time, can try until 2009 only too (up to historical)
 
 ```{r}
 
-sim26 <- therProject(params_IPSL_ssp1rcp26)
-plotBiomass(sim26)
+sim_times <- c(as.numeric(dimnames(other_params(paramsHist)$ocean_temp)[[1]][1]), 
+               dim(other_params(paramsHist)$ocean_temp)[1])
+sim <- therProject(paramsHist)
+plotBiomass(sim)
+plotFeedingLevel(sim)
+plotDiet2(sim)
+```
+
+With the plankton from fishmip, species eat as much as they can and grow too fast.
+
+I need to recalibrate with temperature enabled. In the previous run I solved it using only erepro.
+
+Not working, need to check why, maybe because thermizer object
+```{r}
+
+shiny_erepro(paramsHist)
+
 
 ```
 
-For now everything dies ^^, slowly though. It would be good to have the species stable until 2009 at least.
+
+Also I cannot use calibrateBiomass cause it rescales plankton. Maybe the best way is to scale down the fishmip plankton. So I keep the temperature variations and the historical run is calibrated.
+
+Comparing mizer and fishmip plankton
+
+```{r}
+
+# run this first once before calculating ratio
+# Converting default resource into Fishmip format
+plkt_default <- log10(sim6@n_pp[1,]*sim6@params@dw_full)
+plkt_temp <- sim@params@other_params$other$n_pp_array[1,]
+
+
+# Converting default resource into Fishmip format
+plkt_default <- log10(sim6@n_pp[1,]*sim6@params@dw_full)
+plkt_temp <- sim@params@other_params$other$n_pp_array[1,]/ratio_mean
+
+# Checking that the ratio_mean calculated below works
+plkt_default <- sim6@n_pp[1,]
+plkt_temp <- 10^(sim@params@other_params$other$n_pp_array[1,]/ratio_mean)/(sim@params@dw_full)
 
 
 
 
+plot_dat <- data.frame("plankton" = c(plkt_default,plkt_temp),
+                       "size" = rep(sim@params@w_full,2),
+                       "type" = c(rep("default",length(sim@params@w_full)),
+                                  rep("temperature",length(sim@params@w_full))))
+
+ggplot(plot_dat) +
+  geom_line(aes(x = size, y = plankton, color = type)) +
+  scale_x_continuous(trans = "log10") +
+  scale_y_continuous(trans = "log10")
+
+ratio <- plkt_temp/plkt_default
+plot(ratio)
+
+```
+
+The ratio between the 2 is not constant. Should I take an average or scale down to a flat spectra by having a scalar value for each size class? 
+
+Going to keep the curve, just scaling down with the average ratio.
+
+```{r}
+
+ratio_mean <- mean(ratio[!is.infinite(ratio)])
+ratio_mean <- mean(ratio[-which(ratio == 0)])
+
+```
+
+Saving data with applied ratio and total area while we're at it
+
+```{r}
+n_pp_array_picontrol_scaled <- n_pp_array_picontrol/ratio_mean
+saveRDS(n_pp_array_picontrol_scaled,
+        "~/RstudioProjects/FISHMIP/data/processed/IPSL_n_pp_array_PIcontrol_scaled.RDS")
+
+n_pp_array_ssp1rcp26_scaled <- n_pp_array_ssp1rcp26/ratio_mean
+saveRDS(n_pp_array_ssp1rcp26_scaled,
+        "~/RstudioProjects/FISHMIP/data/processed/IPSL_n_pp_array_CCscenario_126_scaled.RDS")
+
+n_pp_array_ssp5rcp85_scaled <- n_pp_array_ssp5rcp85/ratio_mean
+saveRDS(n_pp_array_ssp5rcp85_scaled,
+        "~/RstudioProjects/FISHMIP/data/processed/IPSL_n_pp_array_CCscenario_585_scaled.RDS")
+```
+
+## Second setup
+
+```{r}
+sim6 <- readRDS("params/params17.rds")
+params <- sim6@params
+
+temp_min <- c(1.8,-1.1,1.3,1.3,-0.1,-1.8,1.4,1.8,1.6) # fishbase
+# species_params(params)$temp_min <- c(1.4,-1.1,1.3,1.3,-0.1,-1.8,1.4,1.4,1.4) # adjusted so species survive historical temperatures
+
+# temp_max <- c(8.8,2.9,2.5,2.8,1.4,2,2.3,3.1,3.9) #fishbase
+temp_max <- c(8.8,2.9,2.5,2.8,2.4,2.4,2.3,3.1,3.9) # adjusted
+
+# temperature
+ocean_temp_picontrol <- readRDS("~/RstudioProjects/FISHMIP/data/processed/IPSL_ocean_temp_array_PIcontrol.RDS")
+ocean_temp_ssp1rcp26 <- readRDS("~/RstudioProjects/FISHMIP/data/processed/IPSL_ocean_temp_array_CCscenario_126.RDS")
+ocean_temp_ssp5rcp85 <- readRDS("~/RstudioProjects/FISHMIP/data/processed/IPSL_ocean_temp_array_CCscenario_585.RDS")
+
+# plankton
+n_pp_array_picontrol <- readRDS("~/RstudioProjects/FISHMIP/data/processed/IPSL_n_pp_array_PIcontrol_scaled.RDS")
+n_pp_array_ssp1rcp26 <- readRDS("~/RstudioProjects/FISHMIP/data/processed/IPSL_n_pp_array_CCscenario_126_scaled.RDS")
+n_pp_array_ssp5rcp85 <- readRDS("~/RstudioProjects/FISHMIP/data/processed/IPSL_n_pp_array_CCscenario_585_scaled.RDS")
+
+params_IPSL_picontrol <- upgradeTherParams(params = params,
+                                           temp_min = temp_min, temp_max = temp_max, 
+                                           ocean_temp_array = ocean_temp_picontrol, 
+                                           n_pp_array = n_pp_array_picontrol) 
+
+params_IPSL_ssp1rcp26 <- upgradeTherParams(params = params,
+                                           temp_min = temp_min, temp_max = temp_max, 
+                                           ocean_temp_array = ocean_temp_ssp1rcp26, 
+                                           n_pp_array = n_pp_array_ssp1rcp26)
+
+params_IPSL_ssp5rcp85 <- upgradeTherParams(params = params,
+                                           temp_min = temp_min, temp_max = temp_max, 
+                                           ocean_temp_array = ocean_temp_ssp5rcp85, 
+                                           n_pp_array = n_pp_array_ssp5rcp85)
+
+```
+
+Checking the model
+
+```{r}
+
+sim <- therProject(params_IPSL_ssp1rcp26)
+plotBiomass(sim)
+plotSpectra(sim)
+plotYield(sim)
+```
+
+Looking good albeit a little change in equilibrium at the stat of the simulation - check with Julia what we should do about it
+
+### trying to recalibrate
+
+
+```{r}
+paramsT <- simT@params
+vary_df <- data.frame("name" = c("R_max","erepro","interaction_resource"),
+                      "length" = c(12,12,12),
+                      "lower" = c(3,0.0001,.1), 
+                      "upper" = c(15,1,.9),
+                      "slot" = rep("species_params",3),
+                      "unit" = c("log10","linear","linear"))
+
+vary <- c(log10(paramsT@species_params$R_max), paramsT@species_params$erepro, paramsT@species_params$interaction_resource)
+
+getErrorCustom(vary = vary, vary_df = vary_df, params = paramsT, data_type = "biomass_observed")
+
+res <- fastOptim(params = paramsT, 
+                 vary = vary,
+                 vary_df = vary_df,
+                 errorFun = getErrorCustom,
+                 data_type = "yield_observed")
+
+
+
+```
+
+
+## Fisheries scenarios
+
+```{r}
+effort_cst <- array(data = c(effort,rep(effort[13],(2093-2002-18))), dim = c(2093-2002,1), dimnames = list("time" = 2003:2093, "gear" = "longline"))
+
+sim <- project(params_IPSL_ssp1rcp26, effort = effort_cst)
+
+plotBiomass(sim)
+plotSpectra(sim)
+
+res <- mizer::plotYield(sim,return_data = T)
+res$ObservedYield <- c(time_series[,1], rep(NA,(2093-2002-18)))
+
+ggplot(res, aes(x = Year)) +
+  geom_line(aes(y = Yield)) +
+  geom_line(aes(y = ObservedYield), color = "red")
+
+```
+
+
+
+```{r}
+
+
+vary_df <- data.frame("name" = c("erepro","catchability"),
+                      "length" = c(9,1),
+                      "lower" = c(1e-10,1e-15), 
+                      "upper" = c(.9,1e-2),
+                      "slot" = c("species_params","gear_params"),
+                      "unit" = c(rep("linear",2)))
+
+vary <- c(paramsHist@species_params$erepro*.1)#,
+#paramsHist@gear_params$catchability[1])
+
+vary_df <- vary_df[1,]
+
+getErrorCustom(params = paramsHist, vary = vary, vary_df = vary_df, data_type = "biomass_observed", effort = effort, time_series = time_series)
+
+params_steady <- projectToSteady(paramsHist, distance_func = distanceSSLogN,
+                                 tol = .001, t_max = 200, return_sim = F)
+
+
+tic()
+res <- mizerHowTo::fastOptim(params = paramsHist,
+                             vary = vary,
+                             vary_df = vary_df,
+                             errorFun = mizerHowTo::getErrorCustom, 
+                             data_type = "yield_observed", 
+                             effort = effort,
+                             time_series = time_series,
+                             libraries = c("optimParallel","therMizer")) 
+
+toc()
+
+```
+
+
+A few figures
+
+```{r}
+
+p1 <- plotGrowthCurves(sim6, species_panel = T)
+
+p2 <- plotFeedingLevel(sim6, include_critical = T)
+
+p3 <- plotDiet(sim6@params, species = "D.ele")
+
+plot_dat <- plotYield(sim6, return_data = T)
+plot_dat$Species <- time_series[,1]
+colnames(plot_dat)[2:3] <- c("modelled","observed")
+plot_dat <- reshape2::melt(plot_dat, "Year")
+
+p4 <- ggplot(plot_dat) +
+  geom_line(aes(x = Year, y = value, color = variable ))+
+  scale_y_continuous(name = "Yield in g")
+
+```
+
+```{r}
+fig.width = 15
+fig.height = 15
+
+ggsave(p1, file = "figures/growth.png", units = "cm", width = fig.width, height = fig.height)
+ggsave(p2, file ="figures/feeding.png", units = "cm", width = fig.width, height = fig.height)
+ggsave(p3, file ="figures/diet.png", units = "cm", width = fig.width, height = fig.height)
+ggsave(p4, file ="figures/yield.png", units = "cm", width = fig.width, height = fig.height)
+
+
+
+
+```
+
+
+interaction matrix calibration
+
+```{r}
+vary_df <- data.frame("name" = c("interaction"),
+                      "length" = c(81),
+                      "lower" = c(0), 
+                      "upper" = c(1),
+                      "slot" = "interaction",
+                      "unit" = "linear")
+
+
+vary <- as.vector(sim6@params@interaction)
+
+getErrorCustom(vary = vary, vary_df = vary_df, params = sim6@params, data_type = "biomass_observed")
+```
 
