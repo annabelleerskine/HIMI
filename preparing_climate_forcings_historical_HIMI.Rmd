@@ -1,0 +1,21 @@
+---
+title: "Preparing past climate forcings for the HIMI model, based on Phoebe and Kieran's tutorial"
+author: "Annabelle Erskine (edited from Phoebe Woodworth-Jefcoats & Kieran Murphy)"
+date: "2023-10-04"
+output: html_document
+---
+#to do- copy code from desktop version and tidy (annabelle)
+```{r setup, include=FALSE}
+library(tidyverse)
+library(reshape2)
+```
+
+Extracted data (fishMIP protocol) from http://portal.sf.utas.edu.au/thredds/catalog/gem/fishmip/ISIMIP3a/InputData/climate/ocean/obsclim/regional/monthly/historical/GFDL-MOM6-COBALT2/catalog.html
+
+HIMI model
+15arcmin
+
+```{r}
+
+```
+
