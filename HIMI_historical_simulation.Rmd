@@ -5,7 +5,7 @@ date: "2023-09-26"
 output: html_document
 ---
 
-Working from Params17- need to check through all Romain's code to see how we got to this point. Looks like this was done pre-thermizer? See 05reboot.RMD
+Working from Params17- need to check through all Romain's code to see how we got to this point. See 05reboot.RMD 
 
 ```{r setup, include=FALSE}
 library(viridisLite)
@@ -31,5 +31,12 @@ plotGrowthCurves(sim@params, max_age= 300)
 
 ```
 
+FishMIP 2.0 Track A (Past)
 
+STEPS:
+
+1. force model with historical ESM plankton and temp outputs for the region (outputs available in file "preparing_climate_forcings_historical_HIMI.rmd").
+2. re calibrate model with new forcings?
+3. Obtain catch data and complete model assessment.
+4. Explore results, obtain outputs for intercomparison ?
 
