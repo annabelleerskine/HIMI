@@ -5,8 +5,31 @@ date: "2023-09-26"
 output: html_document
 ---
 
+Working from Params17- need to check through all Romain's code to see how we got to this point. Looks like this was done pre-thermizer? See 05reboot.RMD
+
 ```{r setup, include=FALSE}
+library(viridisLite)
+library(viridis)
+library(ggplot2)
+library(ggrepel)
+library(tidyverse)
+library(mizerExperimental)
+# library(mizer)
+# remotes::install_github("sizespectrum/mizerExperimental")
+
+Params17 <- readRDS("~/Desktop/2023 SO MODEL PAPER/HIMI/params/params17.rds") #this is the sim object
+params <- Params17@params
+upgradeParams(params)
+plotSpectra(params)
+
+sim1 <- project(params, t_max = 100, effort = 0)
+plot(sim1)
+plotSpectra(sim1, power= 2)
+plotFeedingLevel(sim1)
+plotDiet(sim1@params)
+plotGrowthCurves(sim@params, max_age= 300)
 
 ```
+
 
 
