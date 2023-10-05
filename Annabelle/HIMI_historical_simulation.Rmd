@@ -33,9 +33,9 @@ plotGrowthCurves(sim@params, max_age= 300)
 
 FishMIP 2.0 Track A (Past)
 
-STEPS:
-
-1. force model with historical ESM plankton and temp outputs for the region (outputs available in file "preparing_climate_forcings_historical_HIMI.rmd").
+STEPS (as I currently understand!):
+0. Check plankton outputs, finish temp outputs (file "preparing_climate_forcings_historical_HIMI.rmd")
+1. force model with historical ESM plankton and temp outputs for the region 
 2. re calibrate model with new forcings?
 3. Obtain catch data and complete model assessment.
 4. Explore results, obtain outputs for intercomparison ?
